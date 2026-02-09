@@ -1,0 +1,30 @@
+{
+    "team": [
+        {
+            "name": "Samadhini Perera",
+            "email": "e21289@eng.pdn.ac.lk",
+            "eNumber": "E/21/289"
+        },
+        {
+            "name": "Diwyanjali Jayasooriya",
+            "email": "e21196@eng.pdn.ac.lk",
+            "eNumber": "E/yy/xxx"
+        },
+        {
+            "name": "Vedangi Nadeeshani",
+            "email": "e21193@eng.pdn.ac.lk",
+            "eNumber": "E/21/193"
+        }
+    ],
+    "supervisors": [
+        {
+            "name": "Dr. Supervisor 1",
+            "email": "email@eng.pdn.ac.lk"
+        },
+        {
+            "name": "Supervisor 2",
+            "email": "email@eng.pdn.ac.lk"
+        }
+    ],
+    "tags": ["Web", "Embedded Systems"]
+}
