@@ -16,7 +16,7 @@ title: Project Template
 ## Team
 -  e21196, Diwyanjali Jayasooriya, [e21196@eng.pdn.ac.lk](mailto:e21196@eng.pdn.ac.lk)
 -  e21289, Samadhini Perera, [e21289@eng.pdn.ac.lk](mailto:e21289@eng.pdn.ac.lk)
--  e21196, Vedangi Nadeeshani, [e21193@eng.pdn.ac.lk](mailto:e21193@eng.pdn.ac.lk)
+-  e21193, Vedangi Nadeeshani, [e21193@eng.pdn.ac.lk](mailto:e21193@eng.pdn.ac.lk)
 
 <!-- Image (photo/drawing of the final hardware) should be here -->
 
