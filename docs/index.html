@@ -31,43 +31,27 @@ title: "HYDRA: HYbrid Dynamic Realtime Automation"
 ## Introduction
 
 ### The Real-World Problem
+Urban congestion is one of the defining challenges of modern cities. Traditional traffic control systems rely on **static, fixed-timer logic** that is blind to real-world conditions. A traffic light stays red even when the road is empty, while kilometers of cars sit idling on the cross-street.
 
-Urban congestion is one of the defining challenges of modern cities. Traditional traffic control systems rely on **static, fixed-timer logic** that is blind to real-world conditions. A traffic light stays red even when the road is empty, while kilometers of cars sit idling on the cross-street. This inefficiency leads to billions of dollars in wasted fuel, increased carbon emissions, and severe delays for emergency services.
+Furthermore, standard systems fail to account for **environmental factors** and **vehicle classification**. Heavy vehicles take longer to accelerate, and wet roads increase braking distances, yet traffic lights treat every vehicle and every weather condition exactly the same.
 
-Furthermore, standard systems fail to account for **environmental factors** and **vehicle classification**. Heavy vehicles take longer to accelerate, and wet roads increase braking distances, yet traffic lights treat every vehicle and every weather condition exactly the same. This "one-size-fits-all" approach compromises both road efficiency and public safety.
-
----
-
-## The Solution
-
+### The Solution
 **HYDRA (HYbrid Dynamic Realtime Automation)** is an intelligent, adaptive traffic management system designed to replace static timers with **dynamic, sensor-driven logic**.
 
-HYDRA transforms isolated intersections into a **connected neural network**. By utilizing a "Green Wave" algorithm, it coordinates multiple intersections to allow platoons of vehicles to pass through without stopping. The system uniquely integrates **heavy vehicle detection** to extend green times for trucks and **rain sensors** to increase yellow light safety margins during bad weather.
+HYDRA transforms isolated intersections into a **connected neural network**. By utilizing a "Green Wave" algorithm, it coordinates multiple intersections to allow platoons of vehicles to pass through without stopping. The system uniquely integrates **heavy vehicle detection** and **rain sensors** to adjust safety margins.
 
-For the prototype demonstration, HYDRA implements a **fully automated kinetic model**. Unlike standard static models, our system uses a **gravity-fed servo-barrier mechanism** to physically drive vehicle queues automatically when the light turns green, providing a realistic simulation of traffic flow dynamics.
+For the prototype demonstration, HYDRA implements a **fully automated kinetic model** using a **gravity-fed servo-barrier mechanism** to physically drive vehicle queues automatically when the light turns green.
 
 ---
 
 ## Solution Architecture
 
 ### High-Level Overview
-
 HYDRA follows a **Centralized-Edge Topology** to ensure synchronized decision-making:
 
-- **The Physical Layer (Kinetic Model)**
-  - Dual-intersection road network with 4 paths each.
-  - **Gravity-Assist Drive:** Sloped roads utilize physics to move vehicles.
-  - **Servo-Actuated Barriers:** Automatically release vehicle queues when Green signal is active.
-
-- **Edge Node Layer (The Limbs)**
-  - **ESP32 Microcontrollers** at each intersection.
-  - Localized sensor processing (IR, Ultrasonic, Piezo, Rain).
-  - Real-time actuation of Traffic LEDs and Servo Barriers.
-
-- **Central Intelligence Layer (The Brain)**
-  - **Raspberry Pi / MQTT Broker** acting as the central coordinator.
-  - Runs the **"Green Wave" Algorithm** to calculate travel time between nodes.
-  - Orchestrates signal timing updates based on total network load.
+* **The Physical Layer (Kinetic Model)**: Dual-intersection road network with 4 paths each using gravity-assist drive and servo barriers.
+* **Edge Node Layer (The Limbs)**: ESP32 Microcontrollers handling localized sensor processing (IR, Ultrasonic, Piezo, Rain).
+* **Central Intelligence Layer (The Brain)**: Raspberry Pi / MQTT Broker running the "Green Wave" algorithm.
 
 ---
 
@@ -85,35 +69,22 @@ HYDRA follows a **Centralized-Edge Topology** to ensure synchronized decision-ma
 | Rain Sensor Module | Environmental monitoring for safety overrides |
 | SG90 / MG996R Servos | **Automated Traffic Barrier Mechanism** |
 | Traffic Light LED Modules | Visual signaling |
-| L298N / Ext Power Module | Power distribution for kinetic mechanisms |
-
----
 
 ### Software Components
 
-- **Edge Firmware (C++)**
-  - Runs on ESP32.
-  - Interrupt-based sensor reading for zero-latency detection.
-  - Servo control logic synchronized with State Machine.
-
-- **Central Logic (Python)**
-  - Impact-weighted traffic algorithm.
-  - **Green Wave Calculator:** `T_arrival = T_start + Distance/AvgSpeed`.
-  - MQTT Client for bi-directional communication.
-
-- **Communication Protocols**
-  - **MQTT (Message Queuing Telemetry Transport):** Lightweight protocol for machine-to-machine communication over WiFi.
-  - JSON payloads for sensor data transmission.
+* **Edge Firmware (C++)**: Runs on ESP32. Interrupt-based sensor reading.
+* **Central Logic (Python)**: Impact-weighted traffic algorithm and Green Wave Calculator.
+* **Communication Protocols**: MQTT for machine-to-machine communication over WiFi.
 
 ---
 
 ## Testing
 
 ### Functionality Testing
-- **The "Green Wave" Test:** Verifying that a platoon released from Intersection A arrives at Intersection B exactly as the light turns Green.
-- **Heavy Vehicle Override:** Dropping a weighted model car over the Piezo sensor to trigger extended Green time.
-- **Safety Mode:** Spraying water on the Rain Sensor to verify the automatic increase in Yellow Light duration (Stopping Distance Compensation).
-- **Kinetic Mechanism:** Ensuring Servo Barriers hold traffic at Red and release smoothly at Green without jamming.
+* **The "Green Wave" Test:** Verifying that a platoon released from Intersection A arrives at Intersection B exactly as the light turns Green.
+* **Heavy Vehicle Override:** Dropping a weighted model car over the Piezo sensor to trigger extended Green time.
+* **Safety Mode:** Spraying water on the Rain Sensor to verify the automatic increase in Yellow Light duration.
+* **Kinetic Mechanism:** Ensuring Servo Barriers hold traffic at Red and release smoothly at Green.
 
 ---
 
@@ -139,23 +110,16 @@ HYDRA follows a **Centralized-Edge Topology** to ensure synchronized decision-ma
 
 ## Commercialization Plans
 
-- **Smart City Infrastructure**
-  - Licensing the "Green Wave" algorithm to municipal councils.
-
-- **Industrial Logistics**
-  - Private traffic management for large ports and factories where heavy vehicles dominate.
-
-- **Emergency Response Integration**
-  - A premium module allowing ambulances to trigger a "Flush Mode" via RF signals.
-
-- **Educational STEM Kits**
-  - Selling the "Gravity & Servo" model design as a kit for schools to teach logic and physics.
+* **Smart City Infrastructure:** Licensing the "Green Wave" algorithm to municipal councils.
+* **Industrial Logistics:** Private traffic management for large ports and factories.
+* **Emergency Response:** Premium module for ambulance "Flush Mode" via RF signals.
+* **Educational STEM Kits:** Selling the "Gravity & Servo" model design to schools.
 
 ---
 
 ## Conclusion
 
-HYDRA proves that traffic control does not need to be expensive or complex to be smart. By combining **simple physics** for the model with **sophisticated logic** for the controller, we have demonstrated a scalable solution to urban congestion. The integration of environmental awareness and vehicle classification marks a significant step forward from the "blind" timers of the past to the **responsive, organic traffic flow** of the future.
+HYDRA proves that traffic control does not need to be expensive or complex to be smart. By combining **simple physics** for the model with **sophisticated logic** for the controller, we have demonstrated a scalable solution to urban congestion.
 
 ---
 
