@@ -9,7 +9,7 @@ title: Project Template
 
 [comment]: # "This is the standard layout for the project, but you can clean this and use your own template"
 
-# Project Title
+# HYDRA: HYbrid Dynamic Realtime Automation
 
 ---
 
@@ -106,8 +106,7 @@ All items and costs
 
 ## Conclusion
 
-What was achieved, future developments, commercialization plans
-
+HYDRA demonstrates how **adaptive algorithms and IoT connectivity** can solve the persistent problem of traffic congestion. By prioritizing **real-time responsiveness and emergency transit**, HYDRA not only improves daily commute efficiency but also saves lives—making our roads **safer, smarter, and more efficient**.
 ## Links
 
 - [Project Repository](https://github.com/cepdnaclk/e21-3yp-smart-traffic-control-system){:target="_blank"}
