@@ -7,7 +7,7 @@
 const char* ROAD_ID     = "North";           // Change to "South", "East", or "West"
 const char* WIFI_SSID   = "SLT-4G_166D59";  // Your WiFi name
 const char* WIFI_PASS   = "F58EA0CF";        // Your WiFi password
-const char* MQTT_SERVER = "16.171.197.109";  // Your AWS EC2 Public IP
+const char* MQTT_SERVER = "56.228.30.50";  // Your AWS EC2 Public IP
 const int   MQTT_PORT   = 1883;
 
 // ── HC-SR04 ULTRASONIC SENSOR PINS ──

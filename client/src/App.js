@@ -16,7 +16,7 @@ import {
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
 // ── YOUR AWS SERVER IP ──
-const API_BASE = 'http://16.171.197.109:5000';
+const API_BASE = 'http://56.228.30.50:5000';
 
 // ─────────────────────────────────────────────────────────────
 // TrafficLight visual component
