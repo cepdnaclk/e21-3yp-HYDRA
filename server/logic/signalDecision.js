@@ -1,124 +1,139 @@
-// server/logic/signalDecision.js
-
-// ─────────────────────────────────────────────────────────────
-// TIME CONSTANTS (in seconds)
-// ─────────────────────────────────────────────────────────────
-const BASE_GREEN_TIME = 20;     // Minimum green time (seconds)
-const MAX_GREEN_TIME  = 60;     // Maximum green time (seconds)
-const YELLOW_TIME     = 3;      // Always 3 seconds yellow before red
-const ALL_RED_TIME    = 2;      // Safety gap: all lights red between phases
-const VEHICLE_TIME_FACTOR = 0.5; // Extra 0.5 sec per 10cm of approaching distance
-
-// ─────────────────────────────────────────────────────────────
-// calculatePriority()
-// Calculates a priority SCORE for each road
-// Higher score = should get green light first
+// ═══════════════════════════════════════════════════════════════════════════
+// server/services/googleTrafficService.js — Google Routes API Integration
+// ═══════════════════════════════════════════════════════════════════════════
+// 
+// WHAT THIS DOES:
+//   Checks traffic at the NEXT intersection for each road direction
+//   This tells us: "If we let cars through here, will they get stuck next?"
 //
-// Parameters:
-//   road        - "North", "South", "East", or "West"
-//   distanceCm  - distance from sensor to approaching car (cm)
-//                 null = no car detected
-//   trafficAhead - "Heavy", "Medium", "Light", or "Unknown"
-//                  (traffic condition at NEXT intersection in that direction)
-// ─────────────────────────────────────────────────────────────
-function calculatePriority(road, distanceCm, trafficAhead) {
-    let score = 0;
+// NAWINNA INTERSECTION SETUP:
+//   North road → leads to Clocktower Intersection
+//   South road → comes FROM Clocktower direction  
+//   East road  → leads to Puwakgashandiya intersection
+//   West road  → leads to Puwakgashandiya (other direction)
+//
+// RETURNS: 'Heavy' | 'Medium' | 'Light' | 'Unknown'
+//   Unknown = API failed or key not set (system falls back to sensor-only)
+// ═══════════════════════════════════════════════════════════════════════════
 
-    // ── FACTOR 1: Car is approaching (ultrasonic detected a car) ──
-    if (distanceCm !== null && distanceCm <= 400) {
-        // Closer car = more urgent = higher score
-        // If car is at 30cm → score += (400-30)/10 = 37
-        // If car is at 200cm → score += (400-200)/10 = 20
-        score += (400 - distanceCm) / 10;
+const axios = require('axios');
+
+// ── Next intersection coordinates (adjust these to your real roads) ──────────
+// Origin = Nawinna Intersection (the one we control)
+// Destination = next intersection in that direction
+const NAWINNA_CENTER = { latitude: 7.4853, longitude: 80.3647 };
+
+const ROAD_SEGMENTS = {
+    // North road → leads to Clocktower Junction, Kurunegala
+    North: {
+        label:       'Nawinna North → Clocktower Junction',
+        origin:      NAWINNA_CENTER,
+        destination: { latitude: 7.4912, longitude: 80.3651 } // Clocktower
+    },
+    // South road → southward direction
+    South: {
+        label:       'Nawinna South Direction',
+        origin:      NAWINNA_CENTER,
+        destination: { latitude: 7.4790, longitude: 80.3640 }
+    },
+    // East road → toward Puwakgashandiya
+    East: {
+        label:       'Nawinna East → Puwakgashandiya',
+        origin:      NAWINNA_CENTER,
+        destination: { latitude: 7.4855, longitude: 80.3720 } // Puwakgashandiya
+    },
+    // West road → westward direction
+    West: {
+        label:       'Nawinna West Direction',
+        origin:      NAWINNA_CENTER,
+        destination: { latitude: 7.4850, longitude: 80.3580 }
     }
+};
 
-    // ── FACTOR 2: Traffic ahead — PENALISE if next intersection is jammed ──
-    // Logic: No point sending cars toward a jam — it just creates MORE congestion
-    if (trafficAhead === 'Heavy') {
-        score -= 50;  // Strong penalty — likely won't get green unless emergency
-    } else if (trafficAhead === 'Medium') {
-        score -= 15;  // Moderate penalty
-    } else if (trafficAhead === 'Light') {
-        score += 10;  // Bonus — road ahead is clear, send cars!
-    }
-    // Unknown = no change (neutral)
-
-    return score;
+// ── Convert Google API ratio to our traffic level ────────────────────────────
+// ratio = (time with traffic) / (time without traffic)
+// ratio 1.0 = free flowing
+// ratio 2.0 = double the normal travel time = Heavy
+function ratioToLevel(ratio) {
+    if (ratio >= 2.0)       return 'Heavy';
+    else if (ratio >= 1.3)  return 'Medium';
+    else                    return 'Light';
 }
 
-// ─────────────────────────────────────────────────────────────
-// calculateGreenTime()
-// How long (in seconds) should the green light stay on?
-// ─────────────────────────────────────────────────────────────
-function calculateGreenTime(distanceCm) {
-    if (distanceCm === null) return BASE_GREEN_TIME;
-    // Car is 30cm away  → time = 20 + (30/10 × 0.5) = 20 + 1.5 = ~22 seconds
-    // Car is 200cm away → time = 20 + (200/10 × 0.5) = 20 + 10 = 30 seconds
-    const extra = Math.floor(distanceCm / 10) * VEHICLE_TIME_FACTOR;
-    return Math.min(BASE_GREEN_TIME + extra, MAX_GREEN_TIME);
-}
+// ── Fetch traffic for ONE road direction ─────────────────────────────────────
+async function getTrafficCondition(road) {
+    const segment = ROAD_SEGMENTS[road];
+    if (!segment) return 'Unknown';
 
-// ─────────────────────────────────────────────────────────────
-// makeSignalDecision()
-// Main function: takes sensor data + traffic data, returns commands
-//
-// sensorData example:
-//   { North: 5000, South: 30, East: 40, West: 200 }
-//   (5000 = no car detected, beyond sensor range)
-//
-// trafficData example:
-//   { North: 'Heavy', South: 'Light', East: 'Medium', West: 'Light' }
-// ─────────────────────────────────────────────────────────────
-function makeSignalDecision(sensorData, trafficData) {
-    const roads = ['North', 'South', 'East', 'West'];
+    // If no API key configured, return Unknown (fallback mode)
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey || apiKey === 'YOUR_API_KEY_HERE') {
+        return 'Unknown';
+    }
 
-    // Step 1: Calculate priority score for each road
-    const priorities = roads.map(road => {
-        const distance  = sensorData[road] > 400 ? null : sensorData[road];
-        const traffic   = trafficData[road] || 'Unknown';
-        const score     = calculatePriority(road, distance, traffic);
-        const greenTime = calculateGreenTime(distance);
-        return { road, distance, traffic, score, greenTime };
-    });
+    try {
+        const response = await axios.post(
+            'https://routes.googleapis.com/directions/v2:computeRoutes',
+            {
+                origin:            { location: { latLng: segment.origin } },
+                destination:       { location: { latLng: segment.destination } },
+                travelMode:        'DRIVE',
+                routingPreference: 'TRAFFIC_AWARE'  // Real-time traffic data
+            },
+            {
+                headers: {
+                    'Content-Type':    'application/json',
+                    'X-Goog-Api-Key':  apiKey,
+                    // Only request what we need — saves API quota credits
+                    'X-Goog-FieldMask': 'routes.duration,routes.staticDuration'
+                },
+                timeout: 5000 // 5 second timeout — don't block the system
+            }
+        );
 
-    // Step 2: Sort by score — highest first
-    priorities.sort((a, b) => b.score - a.score);
+        const route = response.data?.routes?.[0];
+        if (!route) return 'Unknown';
 
-    // Step 3: Winner gets GREEN, all others get RED
-    const winner = priorities[0];
+        // duration = with live traffic (e.g., "245s")
+        // staticDuration = without any traffic (e.g., "120s")
+        const withTraffic    = parseInt(route.duration?.replace('s', '') || '0');
+        const withoutTraffic = parseInt(route.staticDuration?.replace('s', '') || '1');
 
-    // Step 4: Build the complete command for each road
-    const commands = {};
-    roads.forEach(road => {
-        if (road === winner.road) {
-            commands[road] = {
-                signal: 'GREEN',
-                greenTime: Math.round(winner.greenTime),
-                reason: `Score: ${winner.score.toFixed(1)}, Distance: ${winner.distance}cm, TrafficAhead: ${winner.traffic}`
-            };
+        if (withoutTraffic === 0) return 'Unknown';
+
+        const ratio = withTraffic / withoutTraffic;
+        const level = ratioToLevel(ratio);
+
+        console.log(`🗺️   [${road}] ${segment.label}: ratio=${ratio.toFixed(2)} → ${level}`);
+        return level;
+
+    } catch (error) {
+        // Common errors:
+        // 403 = API key invalid or billing not enabled
+        // 429 = Quota exceeded
+        // ECONNREFUSED / ETIMEDOUT = Network issue
+        if (error.response?.status === 403) {
+            console.log(`⚠️   [${road}] Google API: Invalid key or billing disabled`);
+        } else if (error.response?.status === 429) {
+            console.log(`⚠️   [${road}] Google API: Quota exceeded`);
         } else {
-            commands[road] = {
-                signal: 'RED',
-                greenTime: 0,
-                reason: 'Waiting'
-            };
+            console.log(`⚠️   [${road}] Google API: ${error.message}`);
         }
-    });
-
-    // Step 5: Build detailed log for the dashboard
-    const decisionLog = {
-        timestamp: new Date().toISOString(),
-        winner: winner.road,
-        greenDuration: Math.round(winner.greenTime),
-        yellowDuration: YELLOW_TIME,
-        allRedDuration: ALL_RED_TIME,
-        priorities: priorities,  // Full sorted list for dashboard display
-        commands: commands
-    };
-
-    return decisionLog;
+        return 'Unknown'; // Safe fallback — system continues with sensor data
+    }
 }
 
-module.exports = { makeSignalDecision, calculatePriority, calculateGreenTime };
+// ── Fetch traffic for ALL 4 roads simultaneously ─────────────────────────────
+// Uses Promise.all so all 4 requests run in parallel (faster)
+async function getAllTrafficConditions() {
+    const [north, south, east, west] = await Promise.all([
+        getTrafficCondition('North'),
+        getTrafficCondition('South'),
+        getTrafficCondition('East'),
+        getTrafficCondition('West')
+    ]);
 
+    return { North: north, South: south, East: east, West: west };
+}
 
+module.exports = { getAllTrafficConditions, getTrafficCondition };
