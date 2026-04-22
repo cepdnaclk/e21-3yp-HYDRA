@@ -889,7 +889,7 @@ function App() {
         // IR Sensor Updates
         socket.on('irUpdate', ({ road, ir1Blocked, ir2Blocked }) => {
             setIrData(prev => {
-                const current = prev[road] || { ir1Blocked: false, ir2Blocked: false, trafficDensity: 'None' };
+              //  const current = prev[road] || { ir1Blocked: false, ir2Blocked: false, trafficDensity: 'None' };
                 let trafficDensity = 'None';
                 if (ir1Blocked && ir2Blocked) trafficDensity = 'Heavy';
                 else if (ir1Blocked || ir2Blocked) trafficDensity = 'Light';
