@@ -1,0 +1,55 @@
+name: Simple CI - 3 Checks
+
+on:
+  push:
+    branches: [ main, ir_rain2 ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Check 1: Server validation
+  check-server:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    - name: Check server files
+      run: |
+        cd server
+        npm ci
+        node -c index.js
+        echo "✓ Server check passed"
+
+  # Check 2: Client build
+  check-client:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    - name: Check client files
+      run: |
+        cd client
+        npm ci
+        npm run build --if-present
+        echo "✓ Client check passed"
+
+  # Check 3: File structure
+  check-structure:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Verify project structure
+      run: |
+        echo "Checking project structure..."
+        [ -d "server" ] && echo "✓ server/ exists" || exit 1
+        [ -d "client" ] && echo "✓ client/ exists" || exit 1
+        [ -d "esp32" ] && echo "✓ esp32/ exists" || exit 1
+        [ -f "server/index.js" ] && echo "✓ server/index.js exists" || exit 1
+        [ -f "client/src/App.js" ] && echo "✓ client/src/App.js exists" || exit 1
+        echo "✓ All 3 structure checks passed"

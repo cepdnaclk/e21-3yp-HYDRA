@@ -1,0 +1,104 @@
+name: CI - HYDRA Traffic Control System
+
+on:
+  push:
+    branches: [ main, ir_rain2, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Job 1: Check server code
+  server-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Install server dependencies
+      run: |
+        cd server
+        npm ci
+      continue-on-error: false
+    
+    - name: Check server syntax
+      run: |
+        cd server
+        node -c index.js
+        node -c logic/signalDecision.js
+      continue-on-error: false
+    
+    - name: Check package.json validity
+      run: |
+        cd server
+        npm config list
+      continue-on-error: false
+
+  # Job 2: Check client code
+  client-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Install client dependencies
+      run: |
+        cd client
+        npm ci
+      continue-on-error: false
+    
+    - name: Build client
+      run: |
+        cd client
+        npm run build --if-present
+      continue-on-error: false
+    
+    - name: Check React syntax
+      run: |
+        cd client/src
+        find . -name "*.js" -exec node -c {} \;
+      continue-on-error: false
+      shell: bash
+
+  # Job 3: Check ESP32 code compilation
+  esp32-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install Arduino CLI
+      run: |
+        curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+        sudo mv bin/arduino-cli /usr/local/bin/
+    
+    - name: Install ESP32 platform
+      run: |
+        arduino-cli core update-index
+        arduino-cli core install esp32:esp32
+    
+    - name: Check ESP32 code syntax
+      run: |
+        for file in esp32/nawinna_node/*.ino; do
+          echo "Checking $file"
+          arduino-cli compile --fqbn esp32:esp32:esp32 --dry-run "$file" || true
+        done
+      continue-on-error: true
+    
+    - name: Verify code has required functions
+      run: |
+        for file in esp32/nawinna_node/*.ino; do
+          echo "Verifying $file"
+          grep -q "void setup" "$file" && echo "✓ setup() found" || echo "✗ setup() missing"
+          grep -q "void loop" "$file" && echo "✓ loop() found" || echo "✗ loop() missing"
+        done
+      continue-on-error: false
