@@ -271,8 +271,18 @@
 // server/logic/signalDecision.js — HYDRA Full Decision Engine
 // ═══════════════════════════════════════════════════════════════════════════
 
-const YELLOW_TIME     = 5;
-const MIN_GREEN_TIME  = 10;
+// logic/signalDecision.js - CORRECTED for ESP32 timing (3s yellow base, 5s when raining)
+
+const YELLOW_TIME_NORMAL = 3;      // 3 seconds base (matches ESP32 BASE_YELLOW_TIME)
+const YELLOW_TIME_RAIN   = 5;      // 5 seconds when raining (3s + 2s = 5s)
+
+// ESP32 timing constants
+const BASE_RED_TIME      = 3;      // Fixed 3 seconds
+const BASE_GREEN_TIME    = 3;      // 3 seconds base
+const LIGHT_TRAFFIC_BONUS = 3;     // +3 seconds for light traffic (1 IR blocked)
+const HEAVY_TRAFFIC_BONUS = 6;     // +6 seconds for heavy traffic (2 IR blocked)
+
+const MIN_GREEN_TIME  = 3;
 const MAX_GREEN_TIME  = 60;
 const DEFAULT_GREEN   = 5;
 const FALLBACK_GREEN  = 5;
@@ -296,6 +306,7 @@ function calculateScore(distanceCm, trafficAhead, irQueue, heavyVehicle, useIRMo
 
     // ── IR Queue mode (distance < 20cm) ─────────────────────────────────────
     if (useIRMode) {
+        // Matches ESP32: Both IR blocked = Heavy Traffic, One IR blocked = Light Traffic
         if (irQueue === 'Heavy')      score += 50; // Both IR blocked
         else if (irQueue === 'Light') score += 25; // One IR blocked
         else                          score += 5;  // No IR blocked
@@ -314,28 +325,38 @@ function calculateScore(distanceCm, trafficAhead, irQueue, heavyVehicle, useIRMo
     return score;
 }
 
-// ── Calculate green time ─────────────────────────────────────────────────────
+// ── Calculate green time (matches ESP32 logic) ───────────────────────────────
 function calculateGreenTime(distanceCm, trafficAhead, irQueue, heavyVehicle, useIRMode) {
-    let baseTime = MIN_GREEN_TIME;
+    // Start with ESP32 base green time (3 seconds)
+    let baseTime = BASE_GREEN_TIME;
 
     if (useIRMode) {
-        // IR mode — based on queue length
-        if (irQueue === 'Heavy')      baseTime = 40;
-        else if (irQueue === 'Light') baseTime = 20;
-        else                          baseTime = MIN_GREEN_TIME;
+        // IR mode — matches ESP32 IR sensor logic
+        // ESP32: Light Traffic (1 sensor) = +3s, Heavy Traffic (2 sensors) = +6s
+        if (irQueue === 'Heavy') {
+            baseTime = BASE_GREEN_TIME + HEAVY_TRAFFIC_BONUS;  // 3s + 6s = 9s
+        } else if (irQueue === 'Light') {
+            baseTime = BASE_GREEN_TIME + LIGHT_TRAFFIC_BONUS;  // 3s + 3s = 6s
+        } else {
+            baseTime = BASE_GREEN_TIME;  // 3s
+        }
     } else {
         // Ultrasonic mode — based on distance
         if (distanceCm === null || distanceCm > SENSOR_MAX_RANGE) {
+            // No vehicle detected, use Google traffic data
             if (trafficAhead === 'Heavy')  return 40;
             if (trafficAhead === 'Medium') return 25;
             if (trafficAhead === 'Light')  return MIN_GREEN_TIME;
             return DEFAULT_GREEN;
         }
+        
+        // Calculate based on distance (closer vehicle = more green time)
         const factor = (distanceCm / SENSOR_MAX_RANGE) * 20;
         baseTime = MIN_GREEN_TIME + factor;
+        baseTime = Math.min(baseTime, MAX_GREEN_TIME);
     }
 
-    // Piezo heavy vehicle extends green
+    // Piezo heavy vehicle extends green (ESP32 doesn't have this, but keeping for flexibility)
     if (heavyVehicle) baseTime += 10;
 
     // Google traffic adjustment
@@ -354,28 +375,39 @@ function determineMode(sensorWorking, googleWorking) {
     return 'FALLBACK';
 }
 
+// ── Get current yellow time based on rain status ────────────────────────────
+function getCurrentYellowTime(rainDetected) {
+    return rainDetected ? YELLOW_TIME_RAIN : YELLOW_TIME_NORMAL;
+}
+
 // ── MAIN DECISION FUNCTION ───────────────────────────────────────────────────
-function makeSignalDecision(sensorData, trafficData, sensorWorking, googleWorking, irData, piezoData) {
+function makeSignalDecision(sensorData, trafficData, sensorWorking, googleWorking, irData, piezoData, rainDetected, pedStatus) {
     const ROADS = ['North', 'South', 'East', 'West'];
     const mode  = determineMode(sensorWorking || {}, googleWorking || false);
+    
+    // Get current yellow time based on rain
+    const currentYellowTime = getCurrentYellowTime(rainDetected || false);
 
     // Safe defaults
     const ir    = irData    || {};
     const piezo = piezoData || {};
+    const ped   = pedStatus || {};
 
     let priorities = [];
 
     if (mode === 'FALLBACK') {
         priorities = ROADS.map((road, i) => ({
             road, distance: null, traffic: 'Unknown',
-            score: ROADS.length - i, greenTime: FALLBACK_GREEN, mode: 'FALLBACK'
+            score: ROADS.length - i, greenTime: FALLBACK_GREEN, 
+            yellowTime: currentYellowTime, mode: 'FALLBACK'
         }));
     } else {
         priorities = ROADS.map(road => {
             const dist    = (sensorData[road] > SENSOR_MAX_RANGE) ? null : sensorData[road];
             const traffic = (trafficData || {})[road] || 'Unknown';
-            const irRoad  = ir[road]    || { queueLevel: 'None' };
+            const irRoad  = ir[road]    || { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' };
             const heavy   = piezo[road] || false;
+            const pedRoad = ped[road]    || { requested: false, crossing: false };
 
             // Decide which sub-mode for this road
             // If distance < 20cm (or null but IR is blocked), use IR mode
@@ -393,18 +425,42 @@ function makeSignalDecision(sensorData, trafficData, sensorWorking, googleWorkin
                 greenTime = calculateGreenTime(null, traffic, 'None', false, false);
             }
 
-            return { road, distance: dist, traffic, score, greenTime, irQueue: irRoad.queueLevel, heavyVehicle: heavy, useIRMode, mode };
+            // Pedestrian request increases priority
+            if (pedRoad.requested || pedRoad.crossing) {
+                score += 30;
+                // Extend green time for pedestrian crossing
+                if (pedRoad.crossing) {
+                    greenTime = Math.max(greenTime, 10);
+                }
+            }
+
+            return { 
+                road, 
+                distance: dist, 
+                traffic, 
+                score, 
+                greenTime, 
+                yellowTime: currentYellowTime,
+                irQueue: irRoad.queueLevel, 
+                ir1Blocked: irRoad.ir1Blocked || false,
+                ir2Blocked: irRoad.ir2Blocked || false,
+                heavyVehicle: heavy, 
+                useIRMode, 
+                mode,
+                pedestrian: pedRoad
+            };
         });
     }
 
+    // Sort by score (highest first)
     priorities.sort((a, b) => b.score - a.score);
     const winner = priorities[0];
 
     const commands = {};
     ROADS.forEach(road => {
         commands[road] = road === winner.road
-            ? { signal: 'GREEN', greenTime: winner.greenTime }
-            : { signal: 'RED',   greenTime: 0 };
+            ? { signal: 'GREEN', greenTime: winner.greenTime, yellowTime: currentYellowTime }
+            : { signal: 'RED',   greenTime: 0, yellowTime: 0 };
     });
 
     return {
@@ -412,12 +468,24 @@ function makeSignalDecision(sensorData, trafficData, sensorWorking, googleWorkin
         mode,
         winner:         winner.road,
         greenDuration:  winner.greenTime,
-        yellowDuration: YELLOW_TIME,
-        redForOthers:   winner.greenTime + YELLOW_TIME,
+        yellowDuration: currentYellowTime,
+        redDuration:    BASE_RED_TIME,
+        redForOthers:   winner.greenTime + currentYellowTime,
         priorities,
         commands,
-        dataStatus: { sensorWorking, googleWorking }
+        dataStatus: { sensorWorking, googleWorking },
+        weather: { rainDetected: rainDetected || false, yellowTime: currentYellowTime }
     };
 }
 
-module.exports = { makeSignalDecision, YELLOW_TIME, MIN_GREEN_TIME, MAX_GREEN_TIME };
+module.exports = { 
+    makeSignalDecision, 
+    YELLOW_TIME_NORMAL, 
+    YELLOW_TIME_RAIN,
+    BASE_RED_TIME,
+    BASE_GREEN_TIME,
+    LIGHT_TRAFFIC_BONUS,
+    HEAVY_TRAFFIC_BONUS,
+    MIN_GREEN_TIME, 
+    MAX_GREEN_TIME 
+};

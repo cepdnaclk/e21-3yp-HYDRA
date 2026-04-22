@@ -389,6 +389,10 @@
 // server/index.js — HYDRA Smart Traffic Control System (COMPLETE VERSION)
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════
+// server/index.js — HYDRA Smart Traffic Control System (CORRECTED YELLOW TIMING)
+// ═══════════════════════════════════════════════════════════════════════════
+
 require('dotenv').config();
 const express        = require('express');
 const cors           = require('cors');
@@ -451,18 +455,32 @@ let currentWinner = null;
 let phaseTimer    = null;
 let currentPhase  = 'RED';
 
-// ── In-memory state additions ──────────────────────────────────────────────
-let irData       = { North: { ir1: false, ir2: false, queueLevel: 'None' },
-                     South: { ir1: false, ir2: false, queueLevel: 'None' },
-                     East:  { ir1: false, ir2: false, queueLevel: 'None' },
-                     West:  { ir1: false, ir2: false, queueLevel: 'None' } };
-let piezoData    = { North: false, South: false, East: false, West: false };
+// ── IR Sensor Data (2 sensors per road) ──────────────────────────────────────
+let irData = {
+    North: { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' },
+    South: { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' },
+    East:  { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' },
+    West:  { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' }
+};
+
+// ── Piezo Sensor Data (heavy vehicle detection) ──────────────────────────────
+let piezoData = { North: false, South: false, East: false, West: false };
+
+// ── Rain Sensor Data - CORRECTED: 3s normal, 5s when raining ─────────────────
 let rainDetected = false;
-let yellowTime   = 5;
-let pedStatus    = { North: { requested: false, crossing: false, duration: 0 },
-                     South: { requested: false, crossing: false, duration: 0 },
-                     East:  { requested: false, crossing: false, duration: 0 },
-                     West:  { requested: false, crossing: false, duration: 0 } };
+let yellowTime = 3;  // 3 seconds normal (matches ESP32 BASE_YELLOW_TIME)
+
+// ── Pedestrian Data ──────────────────────────────────────────────────────────
+let pedStatus = {
+    North: { requested: false, crossing: false, duration: 0 },
+    South: { requested: false, crossing: false, duration: 0 },
+    East:  { requested: false, crossing: false, duration: 0 },
+    West:  { requested: false, crossing: false, duration: 0 }
+};
+
+// ── Traffic Timings ──────────────────────────────────────────────────────────
+let greenTime = { North: 3, South: 3, East: 3, West: 3 };
+let redTime = 3;  // Fixed at 3 seconds (matches ESP32 BASE_RED_TIME)
 
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 3: MQTT BROKER SETUP
@@ -482,84 +500,145 @@ aedes.on('publish', async (packet, client) => {
     const topic   = packet.topic;
     const payload = packet.payload.toString();
 
-    // ── Ultrasonic ──────────────────────────────────────────────────────────
+    // ── Ultrasonic Data ──────────────────────────────────────────────────────
     if (topic.startsWith('traffic/ultrasonic/')) {
         try {
             const data = JSON.parse(payload);
             const road = topic.split('/')[2];
             if (!ROADS.includes(road)) return;
-            sensorData[road]    = data.distanceCm;
+            
+            sensorData[road] = data.distanceCm;
             sensorWorking[road] = true;
+            
             await UltrasonicData.findOneAndUpdate(
                 { road },
-                { road, distanceCm: data.distanceCm, vehicleDetected: data.distanceCm <= 400, timestamp: new Date() },
+                { 
+                    road, 
+                    distanceCm: data.distanceCm, 
+                    vehicleDetected: data.distanceCm <= 400, 
+                    timestamp: new Date() 
+                },
                 { upsert: true, returnDocument: 'after' }
             );
+            
+            console.log(`📡 Ultrasonic [${road}]: ${data.distanceCm < 5000 ? data.distanceCm + 'cm' : 'No vehicle'}`);
             io.emit('sensorUpdate', { road, distanceCm: data.distanceCm });
-        } catch (e) { console.error('Ultrasonic parse error:', e.message); }
+            
+        } catch (e) { 
+            console.error('⚠️ Ultrasonic parse error:', e.message); 
+        }
     }
 
-    // ── IR Sensors ──────────────────────────────────────────────────────────
+    // ── IR Sensors Data (traffic density detection) ──────────────────────────
     if (topic.startsWith('traffic/ir/')) {
         try {
             const data = JSON.parse(payload);
             const road = topic.split('/')[2];
             if (!ROADS.includes(road)) return;
-            irData[road] = { ir1: data.ir1Blocked, ir2: data.ir2Blocked, queueLevel: data.queueLevel };
-            console.log(`🔦 IR [${road}]: ${data.queueLevel}`);
-            io.emit('irUpdate', { road, ...irData[road] });
-        } catch (e) { console.error('IR parse error:', e.message); }
+            
+            // Update IR data
+            irData[road] = {
+                ir1Blocked: data.ir1Blocked || false,
+                ir2Blocked: data.ir2Blocked || false,
+                queueLevel: data.queueLevel || 'None'
+            };
+            
+            // Calculate traffic density based on IR sensors
+            let trafficDensity = 'None';
+            if (data.ir1Blocked && data.ir2Blocked) {
+                trafficDensity = 'Heavy';
+                greenTime[road] = 9;  // 3s base + 6s = 9s total (matches ESP32)
+            } else if (data.ir1Blocked || data.ir2Blocked) {
+                trafficDensity = 'Light';
+                greenTime[road] = 6;  // 3s base + 3s = 6s total (matches ESP32)
+            } else {
+                trafficDensity = 'None';
+                greenTime[road] = 3;  // 3s base (matches ESP32)
+            }
+            
+            console.log(`🔦 IR [${road}]: ${data.ir1Blocked ? 'BLOCKED' : 'CLEAR'} | ${data.ir2Blocked ? 'BLOCKED' : 'CLEAR'} → ${trafficDensity} Traffic (Green: ${greenTime[road]}s)`);
+            io.emit('irUpdate', { road, ir1Blocked: data.ir1Blocked, ir2Blocked: data.ir2Blocked, queueLevel: trafficDensity });
+            
+        } catch (e) { 
+            console.error('⚠️ IR parse error:', e.message); 
+        }
     }
 
-    // ── Piezo ───────────────────────────────────────────────────────────────
+    // ── Piezo Sensor Data (heavy vehicle detection) ──────────────────────────
     if (topic.startsWith('traffic/piezo/')) {
         try {
             const data = JSON.parse(payload);
             const road = topic.split('/')[2];
             if (!ROADS.includes(road)) return;
-            piezoData[road] = data.heavyVehicle;
-            if (data.heavyVehicle) console.log(`🚛 Heavy vehicle on ${road}!`);
+            
+            piezoData[road] = data.heavyVehicle || false;
+            if (data.heavyVehicle) {
+                console.log(`🚛 Heavy vehicle detected on ${road}! Priority increased`);
+            }
             io.emit('piezoUpdate', { road, heavyVehicle: data.heavyVehicle });
-        } catch (e) { console.error('Piezo parse error:', e.message); }
+            
+        } catch (e) { 
+            console.error('⚠️ Piezo parse error:', e.message); 
+        }
     }
 
-    // ── Rain Sensor ─────────────────────────────────────────────────────────
+    // ── Rain Sensor Data - CORRECTED: 3s normal, 5s when raining ──────────────
     if (topic.startsWith('traffic/rain/')) {
         try {
             const data = JSON.parse(payload);
-            rainDetected = data.rainDetected;
-            yellowTime   = rainDetected ? 7 : 5;
-            if (rainDetected) console.log('🌧️ RAIN — yellow extended to 7s');
+            rainDetected = data.rainDetected || false;
+            // CORRECTED: Yellow time matches ESP32
+            // BASE_YELLOW_TIME = 3000 (3s)
+            // RAIN_YELLOW_EXTRA = 2000 (+2s when raining)
+            yellowTime = rainDetected ? 5 : 3;  // 5s when raining, 3s normal
+            
+            console.log(`🌧️ Rain Sensor: ${rainDetected ? 'RAINING (Yellow: 5s = 3s + 2s)' : 'DRY (Yellow: 3s)'}`);
             io.emit('rainUpdate', { rainDetected, yellowTime });
-        } catch (e) { console.error('Rain parse error:', e.message); }
+            
+        } catch (e) { 
+            console.error('⚠️ Rain parse error:', e.message); 
+        }
     }
 
-    // ── Pedestrian ──────────────────────────────────────────────────────────
+    // ── Pedestrian Button Data ───────────────────────────────────────────────
     if (topic.startsWith('traffic/pedestrian/')) {
         try {
             const data = JSON.parse(payload);
             const road = topic.split('/')[2];
             if (!ROADS.includes(road)) return;
-            if (data.requested !== undefined) pedStatus[road].requested = data.requested;
-            if (data.crossing  !== undefined) {
+            
+            if (data.requested !== undefined) {
+                pedStatus[road].requested = data.requested;
+            }
+            if (data.crossing !== undefined) {
                 pedStatus[road].crossing = data.crossing;
                 pedStatus[road].duration = data.duration || 10;
             }
-            console.log(`🚶 Pedestrian [${road}]: requested=${pedStatus[road].requested} crossing=${pedStatus[road].crossing}`);
+            
+            console.log(`🚶 Pedestrian [${road}]: ${pedStatus[road].requested ? 'WAITING' : 'IDLE'} | ${pedStatus[road].crossing ? 'CROSSING' : ''}`);
             io.emit('pedestrianUpdate', { road, ...pedStatus[road] });
-        } catch (e) { console.error('Pedestrian parse error:', e.message); }
+            
+        } catch (e) { 
+            console.error('⚠️ Pedestrian parse error:', e.message); 
+        }
     }
 
-    // ── LED State ───────────────────────────────────────────────────────────
+    // ── LED State from ESP32 ─────────────────────────────────────────────────
     if (topic.startsWith('traffic/state/')) {
         try {
             const data = JSON.parse(payload);
             const road = topic.split('/')[2];
             if (!ROADS.includes(road)) return;
+            
             liveSignalState[road] = data.state;
-            livePhase[road]       = data.state;
+            livePhase[road] = data.state;
+            
+            console.log(`💡 LED State [${road}]: ${data.state}`);
             io.emit('ledStateUpdate', { road, state: data.state });
-        } catch (e) { console.error('State parse error:', e.message); }
+            
+        } catch (e) { 
+            console.error('⚠️ State parse error:', e.message); 
+        }
     }
 });
 
@@ -567,39 +646,56 @@ aedes.on('publish', async (packet, client) => {
 // SECTION 4: SIGNAL CYCLE ENGINE
 // ════════════════════════════════════════════════════════════════════════════
 
-function sendCommandToRoad(road, signal, greenTime, yellowTimeOverride) {
-    const yt = yellowTimeOverride || yellowTime;
+function sendCommandToRoad(road, signal, greenDuration, yellowOverride) {
+    // Use the current yellowTime (3 or 5) if no override provided
+    const yt = (yellowOverride !== undefined && yellowOverride > 0) ? yellowOverride : yellowTime;
     const msg = JSON.stringify({
         signal,
-        greenTime:  greenTime || 5,
+        greenTime: greenDuration || 5,
         yellowTime: yt,
-        timestamp:  new Date().toISOString()
+        timestamp: new Date().toISOString()
     });
+    
     aedes.publish({
-        topic:   `traffic/control/${road}`,
+        topic: `traffic/control/${road}`,
         payload: Buffer.from(msg),
-        qos: 1, retain: true
+        qos: 1,
+        retain: true
     }, (err) => {
         if (err) console.error(`❌ Failed to send to ${road}:`, err);
-        else console.log(`📤 Sent ${road}: ${signal} green=${greenTime}s yellow=${yt}s`);
+        else console.log(`📤 Sent to ${road}: ${signal} (green=${greenDuration}s, yellow=${yt}s)`);
     });
 }
 
 function setAllRoadsRed() {
     ROADS.forEach(road => {
         sendCommandToRoad(road, 'RED', 0, 0);
-        livePhase[road]     = 'RED';
+        livePhase[road] = 'RED';
         liveCountdown[road] = 0;
     });
 }
 
 function decideNextWinner() {
     latestDecision = makeSignalDecision(
-        sensorData, googleTraffic, sensorWorking, googleWorking,
-        irData, piezoData
+        sensorData, 
+        googleTraffic, 
+        sensorWorking, 
+        googleWorking,
+        irData, 
+        piezoData,
+        rainDetected,
+        pedStatus
     );
+    
+    // Add green time to decision based on IR sensors
+    if (latestDecision && latestDecision.winner) {
+        const winnerRoad = latestDecision.winner;
+        latestDecision.greenDuration = greenTime[winnerRoad] || 5;
+        latestDecision.yellowDuration = yellowTime;  // Use current yellow time (3 or 5)
+    }
+    
     io.emit('newDecision', latestDecision);
-    console.log(`🧠 Decision: ${latestDecision.winner} → GREEN (${latestDecision.greenDuration}s) Mode: ${latestDecision.mode}`);
+    console.log(`🧠 Decision: ${latestDecision.winner} gets GREEN (${latestDecision.greenDuration}s) YELLOW (${yellowTime}s) — Mode: ${latestDecision.mode}`);
     return latestDecision;
 }
 
@@ -607,48 +703,50 @@ function runOneCycle() {
     if (forceOverride && forceOverride.active) return;
 
     const decision = decideNextWinner();
-    const winner   = decision.winner;
-    const greenTime  = decision.greenDuration;
-    const yellowTime = decision.yellowDuration;
+    const winner = decision.winner;
+    const greenDuration = decision.greenDuration || greenTime[winner] || 5;
+    const yellowDuration = decision.yellowDuration || yellowTime;  // Use current yellow time
 
     currentWinner = winner;
-    currentPhase  = 'GREEN';
+    currentPhase = 'GREEN';
 
     setAllRoadsRed();
+    
     setTimeout(() => {
-        sendCommandToRoad(winner, 'GREEN', greenTime, yellowTime);
-        livePhase[winner]    = 'GREEN';
+        sendCommandToRoad(winner, 'GREEN', greenDuration, yellowDuration);
+        livePhase[winner] = 'GREEN';
         liveSignalState[winner] = 'GREEN';
-        startCountdown(winner, 'GREEN', greenTime);
-        console.log(`\n🟢  [CYCLE] ${winner} GREEN for ${greenTime}s`);
+        startCountdown(winner, 'GREEN', greenDuration);
+        console.log(`\n🟢 [CYCLE] ${winner} GREEN for ${greenDuration}s`);
         broadcastFullState();
 
         phaseTimer = setTimeout(() => {
             currentPhase = 'YELLOW';
             const nextDecision = decideNextWinner();
-            console.log(`🟡  [CYCLE] ${winner} YELLOW for ${yellowTime}s — NEXT: ${nextDecision.winner}`);
-            sendCommandToRoad(winner, 'YELLOW', 0, yellowTime);
-            livePhase[winner]       = 'YELLOW';
+            console.log(`🟡 [CYCLE] ${winner} YELLOW for ${yellowDuration}s — NEXT: ${nextDecision.winner}`);
+            
+            sendCommandToRoad(winner, 'YELLOW', 0, yellowDuration);
+            livePhase[winner] = 'YELLOW';
             liveSignalState[winner] = 'YELLOW';
-            startCountdown(winner, 'YELLOW', yellowTime);
+            startCountdown(winner, 'YELLOW', yellowDuration);
             broadcastFullState();
 
             phaseTimer = setTimeout(() => {
                 currentPhase = 'RED';
                 sendCommandToRoad(winner, 'RED', 0, 0);
-                livePhase[winner]       = 'RED';
+                livePhase[winner] = 'RED';
                 liveSignalState[winner] = 'RED';
-                liveCountdown[winner]   = 0;
+                liveCountdown[winner] = 0;
                 broadcastFullState();
-                console.log(`🔴  [CYCLE] ${winner} RED — starting next cycle`);
+                console.log(`🔴 [CYCLE] ${winner} RED — starting next cycle`);
 
                 phaseTimer = setTimeout(() => {
                     runOneCycle();
                 }, 2000);
 
-            }, yellowTime * 1000);
+            }, yellowDuration * 1000);
 
-        }, greenTime * 1000);
+        }, greenDuration * 1000);
 
     }, 500);
 }
@@ -671,11 +769,22 @@ function startCountdown(road, phase, seconds) {
 
 function broadcastFullState() {
     io.emit('fullState', {
-        liveSignalState, liveCountdown, livePhase,
-        latestDecision,  sensorData,    googleTraffic,
-        sensorWorking,   googleWorking,
-        irData, piezoData, rainDetected, yellowTime, pedStatus,
-        forceOverride: forceOverride
+        liveSignalState,
+        liveCountdown,
+        livePhase,
+        latestDecision,
+        sensorData,
+        googleTraffic,
+        sensorWorking,
+        googleWorking,
+        irData,
+        piezoData,
+        rainDetected,
+        yellowTime,      // This will be 3 or 5
+        pedStatus,
+        greenTime,
+        redTime,
+        forceOverride: forceOverride 
             ? { active: forceOverride.active, road: forceOverride.road, command: forceOverride.command }
             : null
     });
@@ -685,7 +794,7 @@ function broadcastFullState() {
 // SECTION 5: FORCE OVERRIDE HANDLER
 // ════════════════════════════════════════════════════════════════════════════
 function applyForceOverride(road, command, duration) {
-    console.log(`🚨  FORCE OVERRIDE: ${road} → ${command} for ${duration}s`);
+    console.log(`🚨 FORCE OVERRIDE: ${road} → ${command} for ${duration}s`);
 
     if (phaseTimer) clearTimeout(phaseTimer);
     Object.values(countdownIntervals).forEach(i => clearInterval(i));
@@ -695,13 +804,13 @@ function applyForceOverride(road, command, duration) {
 
     setTimeout(() => {
         sendCommandToRoad(road, command, duration, 5);
-        livePhase[road]       = command;
+        livePhase[road] = command;
         liveSignalState[road] = command;
         startCountdown(road, command, duration);
         broadcastFullState();
 
         setTimeout(() => {
-            console.log('✅  Force override ended — resuming normal cycle');
+            console.log('✅ Force override ended — resuming normal cycle');
             forceOverride = null;
             setAllRoadsRed();
             broadcastFullState();
@@ -718,13 +827,13 @@ async function refreshGoogleTraffic() {
     try {
         const result = await getAllTrafficConditions();
         const hasRealData = Object.values(result).some(v => v !== 'Unknown');
-        googleWorking  = hasRealData;
-        googleTraffic  = result;
-        console.log(`🗺️   Google Traffic: N=${result.North} S=${result.South} E=${result.East} W=${result.West} | Working: ${googleWorking}`);
+        googleWorking = hasRealData;
+        googleTraffic = result;
+        console.log(`🗺️ Google Traffic: N=${result.North} S=${result.South} E=${result.East} W=${result.West} | Working: ${googleWorking}`);
         io.emit('googleTrafficUpdate', { googleTraffic, googleWorking });
     } catch (err) {
         googleWorking = false;
-        console.log('⚠️   Google Traffic unavailable — using sensor-only mode');
+        console.log('⚠️ Google Traffic unavailable — using sensor-only mode');
     }
 }
 
@@ -741,7 +850,14 @@ app.get('/api/traffic', async (req, res) => {
             livePhase,
             sensorWorking,
             googleWorking,
-            currentDecision: latestDecision
+            currentDecision: latestDecision,
+            irData,
+            piezoData,
+            rainDetected,
+            yellowTime,
+            pedStatus,
+            greenTime,
+            redTime
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -760,6 +876,14 @@ app.get('/api/sensor-data', async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+app.get('/api/ir-data', (req, res) => {
+    res.json(irData);
+});
+
+app.get('/api/rain-status', (req, res) => {
+    res.json({ rainDetected, yellowTime });
 });
 
 app.post('/api/traffic/control', (req, res) => {
@@ -781,14 +905,25 @@ app.post('/api/system/resume', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'online', googleWorking, sensorWorking, currentWinner, currentPhase, uptime: process.uptime() });
+    res.json({ 
+        status: 'online', 
+        googleWorking, 
+        sensorWorking, 
+        currentWinner, 
+        currentPhase, 
+        uptime: process.uptime(),
+        rainDetected,
+        yellowTime,
+        irData
+    });
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 8: SOCKET.IO
+// SECTION 8: SOCKET.IO CONNECTION
 // ════════════════════════════════════════════════════════════════════════════
 io.on('connection', (socket) => {
-    console.log('🖥️   Dashboard connected:', socket.id);
+    console.log('🖥️ Dashboard connected:', socket.id);
+    
     socket.emit('fullState', {
         liveSignalState,
         liveCountdown,
@@ -801,21 +936,34 @@ io.on('connection', (socket) => {
         irData,
         piezoData,
         rainDetected,
-        yellowTime,
-        pedStatus
+        yellowTime,      // This will be 3 or 5
+        pedStatus,
+        greenTime,
+        redTime
     });
-    socket.on('disconnect', () => console.log('🖥️   Dashboard disconnected:', socket.id));
+    
+    socket.on('disconnect', () => console.log('🖥️ Dashboard disconnected:', socket.id));
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// SECTION 9: CATCH-ALL ROUTE FOR REACT ROUTING
+// ════════════════════════════════════════════════════════════════════════════
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
+});
 
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 10: START EVERYTHING
 // ════════════════════════════════════════════════════════════════════════════
-mqttServer.listen(MQTT_PORT, () => console.log(`📡  MQTT Broker running on port ${MQTT_PORT}`));
-httpServer.listen(PORT, () => console.log(`✅  API + Dashboard Server running on port ${PORT}`));
+mqttServer.listen(MQTT_PORT, () => console.log(`📡 MQTT Broker running on port ${MQTT_PORT}`));
+httpServer.listen(PORT, () => console.log(`✅ API + Dashboard Server running on port ${PORT}`));
 
 setTimeout(async () => {
-    console.log('\n🚦  Starting HYDRA Signal Cycle Engine...');
+    console.log('\n🚦 Starting HYDRA Signal Cycle Engine...');
+    console.log(`📋 Configuration:`);
+    console.log(`   - RED Time: ${redTime}s (Fixed)`);
+    console.log(`   - YELLOW Time: ${yellowTime}s (3s normal, 5s when raining)`);
+    console.log(`   - GREEN Time: 3s base + traffic bonus (Light: +3s, Heavy: +6s)`);
     await refreshGoogleTraffic();
     setInterval(refreshGoogleTraffic, 30000);
     runOneCycle();

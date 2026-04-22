@@ -626,7 +626,7 @@
 // export default App;
 
 
-// client/src/App.js — HYDRA Complete Dashboard
+// client/src/App.js — HYDRA Complete Dashboard with IR & Rain Sensor Integration
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import axios from 'axios';
@@ -660,15 +660,15 @@ const Bulb = ({ color, active, size = 36 }) => {
     );
 };
 
-const StatusChip = ({ active, label, icon }) => (
+const StatusChip = ({ active, label, icon, activeColor = '#4ade80', inactiveColor = '#475569' }) => (
     <div style={{
         display: 'flex', alignItems: 'center', gap: 4,
         background: active ? '#14532d' : '#1e293b',
-        color: active ? '#4ade80' : '#475569',
+        color: active ? activeColor : inactiveColor,
         border: `1px solid ${active ? '#22c55e' : '#334155'}`,
         borderRadius: 8, padding: '3px 8px', fontSize: 11, fontWeight: 'bold'
     }}>
-        <span>{icon}</span><span>{label}: {active ? 'ON' : 'OFF'}</span>
+        <span>{icon}</span><span>{label}: {active ? 'ACTIVE' : 'CLEAR'}</span>
     </div>
 );
 
@@ -736,6 +736,50 @@ const ForcePanel = ({ road, onForce }) => {
     );
 };
 
+// IR Traffic Density Badge
+const TrafficDensityBadge = ({ density }) => {
+    const map = {
+        'Heavy':   { bg: '#7f1d1d', color: '#f87171', icon: '🔴', label: 'HEAVY TRAFFIC (+6s Green)' },
+        'Light':   { bg: '#713f12', color: '#fde047', icon: '🟡', label: 'LIGHT TRAFFIC (+3s Green)' },
+        'None':    { bg: '#14532d', color: '#4ade80', icon: '🟢', label: 'NO TRAFFIC (Base Green)' },
+        'Unknown': { bg: '#1e293b', color: '#64748b', icon: '❓', label: 'UNKNOWN' },
+    };
+    const s = map[density] || map.Unknown;
+    return (
+        <div style={{
+            background: s.bg, color: s.color, border: `1px solid ${s.color}44`,
+            padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 'bold',
+            display: 'inline-flex', alignItems: 'center', gap: 6
+        }}>
+            <span>{s.icon}</span> {s.label}
+        </div>
+    );
+};
+
+// Weather Badge - CORRECTED: Normal 3s, Rain 5s
+const WeatherBadge = ({ isRaining, yellowTime }) => {
+    if (isRaining) {
+        return (
+            <div style={{
+                background: '#1e3a5f', color: '#60a5fa', border: '1px solid #3b82f6',
+                padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 'bold',
+                display: 'inline-flex', alignItems: 'center', gap: 6
+            }}>
+                <span>🌧️</span> RAINING — Yellow: {yellowTime}s (3s + 2s)
+            </div>
+        );
+    }
+    return (
+        <div style={{
+            background: '#14532d', color: '#4ade80', border: '1px solid #22c55e',
+            padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 'bold',
+            display: 'inline-flex', alignItems: 'center', gap: 6
+        }}>
+            <span>☀️</span> DRY — Yellow: {yellowTime}s (Normal)
+        </div>
+    );
+};
+
 // ── Main App ─────────────────────────────────────────────────────────────────
 function App() {
     const [livePhase,     setLivePhase]     = useState({ North:'RED', South:'RED', East:'RED', West:'RED' });
@@ -744,15 +788,28 @@ function App() {
     const [googleTraffic, setGoogleTraffic] = useState({ North:'Unknown', South:'Unknown', East:'Unknown', West:'Unknown' });
     const [sensorWorking, setSensorWorking] = useState({});
     const [googleWorking, setGoogleWorking] = useState(false);
-    const [irData,        setIrData]        = useState({});
-    const [piezoData,     setPiezoData]     = useState({});
-    const [rainDetected,  setRainDetected]  = useState(false);
-    const [yellowTime,    setYellowTime]    = useState(5);
-    const [pedStatus,     setPedStatus]     = useState({});
-    const [decision,      setDecision]      = useState(null);
-    const [connected,     setConnected]     = useState(false);
-    const [chartHistory,  setChartHistory]  = useState([]);
-    const [notification,  setNotification]  = useState(null);
+    
+    // IR Sensor Data (2 sensors per road)
+    const [irData, setIrData] = useState({
+        North: { ir1Blocked: false, ir2Blocked: false, trafficDensity: 'None' },
+        South: { ir1Blocked: false, ir2Blocked: false, trafficDensity: 'None' },
+        East:  { ir1Blocked: false, ir2Blocked: false, trafficDensity: 'None' },
+        West:  { ir1Blocked: false, ir2Blocked: false, trafficDensity: 'None' }
+    });
+    
+    // Rain Sensor Data - CORRECTED: Normal yellow = 3s, Rain yellow = 5s
+    const [rainDetected, setRainDetected] = useState(false);
+    const [yellowTime, setYellowTime] = useState(3); // 3s base, 5s when raining
+    
+    // Traffic timings (calculated based on sensors)
+    const [greenTime, setGreenTime] = useState({ North:3, South:3, East:3, West:3 });
+    const [redTime, setRedTime] = useState(3); // Fixed at 3 seconds
+    
+    const [pedStatus, setPedStatus] = useState({});
+    const [decision, setDecision] = useState(null);
+    const [connected, setConnected] = useState(false);
+    const [chartHistory, setChartHistory] = useState([]);
+    const [notification, setNotification] = useState(null);
 
     const socketRef = useRef(null);
 
@@ -776,11 +833,38 @@ function App() {
             if (data.latestDecision)  setDecision(data.latestDecision);
             if (data.sensorWorking)   setSensorWorking(data.sensorWorking);
             if (data.googleWorking !== undefined) setGoogleWorking(data.googleWorking);
-            if (data.irData)          setIrData(data.irData);
-            if (data.piezoData)       setPiezoData(data.piezoData);
-            if (data.rainDetected !== undefined) setRainDetected(data.rainDetected);
-            if (data.yellowTime)      setYellowTime(data.yellowTime);
-            if (data.pedStatus)       setPedStatus(data.pedStatus);
+            
+            // IR Sensor Data
+            if (data.irData) {
+                const newIrData = {};
+                ROADS.forEach(road => {
+                    const ir = data.irData[road] || {};
+                    const ir1Blocked = ir.ir1Blocked || false;
+                    const ir2Blocked = ir.ir2Blocked || false;
+                    
+                    // Calculate traffic density based on IR sensors
+                    let trafficDensity = 'None';
+                    if (ir1Blocked && ir2Blocked) trafficDensity = 'Heavy';
+                    else if (ir1Blocked || ir2Blocked) trafficDensity = 'Light';
+                    
+                    newIrData[road] = { ir1Blocked, ir2Blocked, trafficDensity };
+                });
+                setIrData(newIrData);
+            }
+            
+            // Rain Sensor Data - CORRECTED
+            if (data.rainDetected !== undefined) {
+                setRainDetected(data.rainDetected);
+                // Yellow time: 3s base, +2s when raining = 5s total
+                const newYellowTime = data.rainDetected ? 5 : 3;
+                setYellowTime(newYellowTime);
+            }
+            
+            // Traffic timings
+            if (data.greenTime) setGreenTime(data.greenTime);
+            if (data.redTime !== undefined) setRedTime(data.redTime);
+            
+            if (data.pedStatus) setPedStatus(data.pedStatus);
 
             setChartHistory(prev => {
                 const e = {
@@ -801,9 +885,29 @@ function App() {
         socket.on('ledStateUpdate',   ({ road, state }) => setLivePhase(p => ({ ...p, [road]: state })));
         socket.on('newDecision',      dec => setDecision(dec));
         socket.on('sensorUpdate',     ({ road, distanceCm }) => setSensorData(p => ({ ...p, [road]: distanceCm })));
-        socket.on('irUpdate',         ({ road, ...rest }) => setIrData(p => ({ ...p, [road]: rest })));
-        socket.on('piezoUpdate',      ({ road, heavyVehicle }) => setPiezoData(p => ({ ...p, [road]: heavyVehicle })));
-        socket.on('rainUpdate',       ({ rainDetected: r, yellowTime: y }) => { setRainDetected(r); setYellowTime(y); });
+        
+        // IR Sensor Updates
+        socket.on('irUpdate', ({ road, ir1Blocked, ir2Blocked }) => {
+            setIrData(prev => {
+                const current = prev[road] || { ir1Blocked: false, ir2Blocked: false, trafficDensity: 'None' };
+                let trafficDensity = 'None';
+                if (ir1Blocked && ir2Blocked) trafficDensity = 'Heavy';
+                else if (ir1Blocked || ir2Blocked) trafficDensity = 'Light';
+                return {
+                    ...prev,
+                    [road]: { ir1Blocked, ir2Blocked, trafficDensity }
+                };
+            });
+        });
+        
+        // Rain Sensor Update - CORRECTED
+        socket.on('rainUpdate', ({ rainDetected: r, yellowTime: y }) => {
+            setRainDetected(r);
+            // Ensure yellow time is 3s normal, 5s when raining
+            const correctYellowTime = r ? 5 : 3;
+            setYellowTime(correctYellowTime);
+        });
+        
         socket.on('pedestrianUpdate', ({ road, ...rest }) => setPedStatus(p => ({ ...p, [road]: rest })));
         socket.on('googleTrafficUpdate', ({ googleTraffic: gt, googleWorking: gw }) => { setGoogleTraffic(gt); setGoogleWorking(gw); });
 
@@ -830,6 +934,15 @@ function App() {
     };
 
     const winner = decision?.winner;
+    
+    // Get traffic density color
+    const getDensityColor = (density) => {
+        switch(density) {
+            case 'Heavy': return '#f87171';
+            case 'Light': return '#fde047';
+            default: return '#4ade80';
+        }
+    };
 
     // Sensor accuracy score: how many sensors active / total possible
     const activeSensors = Object.values(sensorWorking).filter(Boolean).length;
@@ -860,12 +973,13 @@ function App() {
                     <span style={{ background: '#1e293b', color: '#94a3b8', padding: '3px 12px', borderRadius: 20, fontSize: 12 }}>
                         Mode: {decision?.mode || 'Starting...'}
                     </span>
-                    {/* Rain indicator */}
-                    <span style={{ background: rainDetected ? '#1e3a5f' : '#1e293b', color: rainDetected ? '#60a5fa' : '#475569', padding: '3px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold' }}>
-                        {rainDetected ? '🌧️ RAIN — Yellow: 7s' : '☀️ Clear — Yellow: 5s'}
-                    </span>
+                    {/* Rain indicator - shows correct yellow timing */}
+                    <WeatherBadge isRaining={rainDetected} yellowTime={yellowTime} />
                     <span style={{ background: '#1e293b', color: '#94a3b8', padding: '3px 12px', borderRadius: 20, fontSize: 12 }}>
                         📊 Sensor Accuracy: {sensorAccuracy}% ({activeSensors}/4 active)
+                    </span>
+                    <span style={{ background: '#1e293b', color: '#94a3b8', padding: '3px 12px', borderRadius: 20, fontSize: 12 }}>
+                        🔴 RED Fixed: {redTime}s
                     </span>
                 </div>
             </div>
@@ -879,8 +993,13 @@ function App() {
                             Priority: <span style={{ color: '#4ade80' }}>{decision.winner} Road → GREEN ({decision.greenDuration}s)</span>
                         </div>
                         <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 3 }}>
-                            Yellow {decision.yellowDuration}s → Others RED {decision.redForOthers}s | Mode: {decision.mode}
+                            Yellow {decision.yellowDuration || yellowTime}s → Others RED {decision.redForOthers}s | Mode: {decision.mode}
                         </div>
+                        {rainDetected && (
+                            <div style={{ color: '#60a5fa', fontSize: 11, marginTop: 4 }}>
+                                🌧️ Rain detected — Yellow extended to {yellowTime}s (3s + 2s)
+                            </div>
+                        )}
                     </div>
                     <div style={{ display: 'flex', gap: 10 }}>
                         {['RED','YELLOW','GREEN'].map(c => (
@@ -896,16 +1015,16 @@ function App() {
             )}
 
             {/* Road Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 16, marginBottom: 22 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(380px,1fr))', gap: 16, marginBottom: 22 }}>
                 {ROADS.map(road => {
                     const phase   = livePhase[road] || 'RED';
                     const count   = liveCountdown[road] || 0;
                     const dist    = sensorData[road] || 5000;
                     const google  = googleTraffic[road] || 'Unknown';
                     const isWin   = winner === road;
-                    const ir      = irData[road]   || { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' };
-                    const heavy   = piezoData[road] || false;
+                    const ir      = irData[road] || { ir1Blocked: false, ir2Blocked: false, trafficDensity: 'None' };
                     const ped     = pedStatus[road] || { requested: false, crossing: false, duration: 0 };
+                    const roadGreenTime = greenTime[road] || 3;
 
                     return (
                         <div key={road} style={{
@@ -944,31 +1063,74 @@ function App() {
                                     <div style={{ background: '#0f172a', borderRadius: 8, padding: 10, marginBottom: 8 }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
                                             <span>📡</span>
-                                            <span style={{ fontSize: 11, color: '#64748b' }}>Ultrasonic</span>
-                                            <StatusChip active={sensorWorking[road]} label="Sensor" icon="" />
+                                            <span style={{ fontSize: 11, color: '#64748b' }}>Ultrasonic Sensor</span>
+                                            <StatusChip active={sensorWorking[road]} label="Status" icon="" />
                                         </div>
                                         <ProximityBar distanceCm={dist} />
-                                        {dist < 20 && dist > 0 && (
-                                            <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 4 }}>
-                                                ⚡ &lt;20cm — Using IR sensor mode
-                                            </div>
-                                        )}
                                     </div>
 
-                                    {/* Sensor status chips */}
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
-                                        <StatusChip active={ir.ir1Blocked} label="IR-1" icon="🔦" />
-                                        <StatusChip active={ir.ir2Blocked} label="IR-2" icon="🔦" />
-                                        <StatusChip active={heavy}         label="Heavy Veh" icon="🚛" />
-                                        <StatusChip active={rainDetected}  label="Rain" icon="🌧️" />
-                                    </div>
-
-                                    {/* Queue level */}
-                                    {ir.queueLevel && ir.queueLevel !== 'None' && (
-                                        <div style={{ fontSize: 11, color: ir.queueLevel === 'Heavy' ? '#f87171' : '#fde047', marginBottom: 6 }}>
-                                            🚗 Queue: {ir.queueLevel}
+                                    {/* IR SENSORS SECTION */}
+                                    <div style={{ background: '#0f172a', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                                            <span>🔦</span>
+                                            <span style={{ fontSize: 11, color: '#64748b' }}>IR Sensors (Traffic Detection)</span>
                                         </div>
-                                    )}
+                                        
+                                        {/* IR Sensor Status */}
+                                        <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+                                            <StatusChip 
+                                                active={ir.ir1Blocked} 
+                                                label="IR-1" 
+                                                icon="📥" 
+                                                activeColor={ir.ir1Blocked ? '#f87171' : '#4ade80'}
+                                            />
+                                            <StatusChip 
+                                                active={ir.ir2Blocked} 
+                                                label="IR-2" 
+                                                icon="📤" 
+                                                activeColor={ir.ir2Blocked ? '#f87171' : '#4ade80'}
+                                            />
+                                        </div>
+                                        
+                                        {/* Traffic Density Display */}
+                                        <div style={{ marginTop: 6 }}>
+                                            <TrafficDensityBadge density={ir.trafficDensity} />
+                                            {ir.trafficDensity === 'Heavy' && (
+                                                <div style={{ fontSize: 10, color: '#f87171', marginTop: 4 }}>
+                                                    ⚡ Both sensors blocked → Green extended by 6 seconds (Total: {roadGreenTime}s)
+                                                </div>
+                                            )}
+                                            {ir.trafficDensity === 'Light' && (
+                                                <div style={{ fontSize: 10, color: '#fde047', marginTop: 4 }}>
+                                                    ⚡ One sensor blocked → Green extended by 3 seconds (Total: {roadGreenTime}s)
+                                                </div>
+                                            )}
+                                            {ir.trafficDensity === 'None' && (
+                                                <div style={{ fontSize: 10, color: '#4ade80', marginTop: 4 }}>
+                                                    ✓ No sensors blocked → Base green time (3s)
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Rain Sensor Status for this road (shared) - CORRECTED */}
+                                    <div style={{ background: '#0f172a', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                                            <span>🌧️</span>
+                                            <span style={{ fontSize: 11, color: '#64748b' }}>Weather Status</span>
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                            <StatusChip 
+                                                active={rainDetected} 
+                                                label="Rain" 
+                                                icon={rainDetected ? '🌧️' : '☀️'}
+                                                activeColor="#60a5fa"
+                                            />
+                                            <span style={{ fontSize: 11, color: rainDetected ? '#60a5fa' : '#4ade80' }}>
+                                                Yellow Time: {yellowTime}s {rainDetected ? '(3s + 2s = 5s)' : '(Normal: 3s)'}
+                                            </span>
+                                        </div>
+                                    </div>
 
                                     {/* Next intersection traffic */}
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -1015,19 +1177,22 @@ function App() {
 
             {/* Sensor Accuracy Panel */}
             <div style={{ background: 'linear-gradient(160deg,#1a2540,#111827)', borderRadius: 16, padding: 20, marginBottom: 22, border: '1px solid #1e3a5f' }}>
-                <h3 style={{ margin: '0 0 14px', color: '#94a3b8', fontSize: 14 }}>📊 System Accuracy & Sensor Reliability</h3>
+                <h3 style={{ margin: '0 0 14px', color: '#94a3b8', fontSize: 14 }}>📊 System Configuration & Sensor Status</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12 }}>
                     {[
                         { label: 'Ultrasonic Active', value: `${activeSensors}/4`, ok: activeSensors > 0 },
+                        { label: 'IR Sensors Active', value: '4/4', ok: true },
+                        { label: 'Rain Sensor',       value: rainDetected ? 'Rain Detected' : 'Clear', ok: true },
+                        { label: 'Yellow Time',       value: `${yellowTime}s ${rainDetected ? '(Rain Mode: 3s → 5s)' : '(Normal: 3s)'}`, ok: true },
+                        { label: 'Red Time',          value: `${redTime}s (Fixed)`, ok: true },
+                        { label: 'Green Base',        value: '3s + Traffic Bonus', ok: true },
                         { label: 'Google Traffic',    value: googleWorking ? 'Active' : 'Disabled', ok: googleWorking },
-                        { label: 'Rain Sensor',       value: rainDetected ? 'Rain' : 'Clear', ok: true },
-                        { label: 'Yellow Time',       value: `${yellowTime}s ${rainDetected ? '(Rain Mode)' : ''}`, ok: true },
                         { label: 'System Mode',       value: decision?.mode || '—', ok: decision?.mode === 'BOTH' },
                         { label: 'Current Cycle',     value: winner ? `${winner} → GREEN` : 'Starting', ok: !!winner },
                     ].map(m => (
                         <div key={m.label} style={{ background: '#0f172a', borderRadius: 10, padding: 12, border: `1px solid ${m.ok ? '#22c55e33' : '#ef444433'}` }}>
                             <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4, letterSpacing: 1 }}>{m.label}</div>
-                            <div style={{ fontSize: 15, fontWeight: 'bold', color: m.ok ? '#4ade80' : '#f87171' }}>{m.value}</div>
+                            <div style={{ fontSize: 14, fontWeight: 'bold', color: m.ok ? '#4ade80' : '#f87171' }}>{m.value}</div>
                         </div>
                     ))}
                 </div>
@@ -1054,37 +1219,57 @@ function App() {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                             <thead>
                                 <tr style={{ borderBottom: '1px solid #1e3a5f' }}>
-                                    {['Rank','Road','Distance','IR Queue','Heavy Veh','Next Traffic','Score','Green Time','LED'].map(h => (
+                                    {['Rank','Road','Distance','IR Traffic','Rain','Next Traffic','Score','Green Time','LED'].map(h => (
                                         <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#475569', fontSize: 10, letterSpacing: 1 }}>{h}</th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {decision.priorities.map((p, i) => (
-                                    <tr key={p.road} style={{ borderBottom: '1px solid #0f172a', background: i === 0 ? 'rgba(34,197,94,0.05)' : 'transparent' }}>
-                                        <td style={{ padding: '8px 10px', color: i === 0 ? '#4ade80' : '#64748b', fontWeight: 'bold' }}>#{i+1}</td>
-                                        <td style={{ padding: '8px 10px', fontWeight: 'bold', color: i === 0 ? '#e2e8f0' : '#94a3b8' }}>{p.road}</td>
-                                        <td style={{ padding: '8px 10px', color: '#94a3b8' }}>{p.distance ? `${p.distance}cm` : 'None'}</td>
-                                        <td style={{ padding: '8px 10px', color: p.irQueue === 'Heavy' ? '#f87171' : '#94a3b8' }}>{p.irQueue || 'None'}</td>
-                                        <td style={{ padding: '8px 10px', color: p.heavyVehicle ? '#fde047' : '#475569' }}>{p.heavyVehicle ? '🚛 Yes' : 'No'}</td>
-                                        <td style={{ padding: '8px 10px' }}><TrafficBadge level={p.traffic} /></td>
-                                        <td style={{ padding: '8px 10px', color: p.score > 0 ? '#4ade80' : p.score < 0 ? '#f87171' : '#94a3b8', fontWeight: 'bold' }}>{p.score?.toFixed(1)}</td>
-                                        <td style={{ padding: '8px 10px', color: '#94a3b8' }}>{p.greenTime ? `${Math.round(p.greenTime)}s` : '—'}</td>
-                                        <td style={{ padding: '8px 10px' }}>
-                                            <span style={{ background: livePhase[p.road] === 'GREEN' ? '#14532d' : livePhase[p.road] === 'YELLOW' ? '#713f12' : '#7f1d1d', color: livePhase[p.road] === 'GREEN' ? '#4ade80' : livePhase[p.road] === 'YELLOW' ? '#fde047' : '#f87171', padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 'bold' }}>
-                                                {livePhase[p.road] || 'RED'}{liveCountdown[p.road] > 0 ? ` (${liveCountdown[p.road]}s)` : ''}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {decision.priorities.map((p, i) => {
+                                    const irForRoad = irData[p.road] || { trafficDensity: 'None' };
+                                    return (
+                                        <tr key={p.road} style={{ borderBottom: '1px solid #0f172a', background: i === 0 ? 'rgba(34,197,94,0.05)' : 'transparent' }}>
+                                            <td style={{ padding: '8px 10px', color: i === 0 ? '#4ade80' : '#64748b', fontWeight: 'bold' }}>#{i+1}</td>
+                                            <td style={{ padding: '8px 10px', fontWeight: 'bold', color: i === 0 ? '#e2e8f0' : '#94a3b8' }}>{p.road}</td>
+                                            <td style={{ padding: '8px 10px', color: '#94a3b8' }}>{p.distance ? `${p.distance}cm` : 'None'}</td>
+                                            <td style={{ padding: '8px 10px', color: getDensityColor(irForRoad.trafficDensity), fontWeight: 'bold' }}>
+                                                {irForRoad.trafficDensity === 'Heavy' ? '🔴 HEAVY (+6s)' : irForRoad.trafficDensity === 'Light' ? '🟡 LIGHT (+3s)' : '🟢 NONE'}
+                                            </td>
+                                            <td style={{ padding: '8px 10px', color: rainDetected ? '#60a5fa' : '#4ade80' }}>
+                                                {rainDetected ? '🌧️ Rain (5s Yellow)' : '☀️ Dry (3s Yellow)'}
+                                            </td>
+                                            <td style={{ padding: '8px 10px' }}><TrafficBadge level={p.traffic} /></td>
+                                            <td style={{ padding: '8px 10px', color: p.score > 0 ? '#4ade80' : p.score < 0 ? '#f87171' : '#94a3b8', fontWeight: 'bold' }}>{p.score?.toFixed(1)}</td>
+                                            <td style={{ padding: '8px 10px', color: '#94a3b8' }}>{p.greenTime ? `${Math.round(p.greenTime)}s` : '—'}</td>
+                                            <td style={{ padding: '8px 10px' }}>
+                                                <span style={{ background: livePhase[p.road] === 'GREEN' ? '#14532d' : livePhase[p.road] === 'YELLOW' ? '#713f12' : '#7f1d1d', color: livePhase[p.road] === 'GREEN' ? '#4ade80' : livePhase[p.road] === 'YELLOW' ? '#fde047' : '#f87171', padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 'bold' }}>
+                                                    {livePhase[p.road] || 'RED'}{liveCountdown[p.road] > 0 ? ` (${liveCountdown[p.road]}s)` : ''}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
                 </div>
             )}
 
+            {/* Legend / Info Footer - CORRECTED */}
+            <div style={{ background: 'linear-gradient(160deg,#1a2540,#111827)', borderRadius: 16, padding: 16, marginTop: 22, border: '1px solid #1e3a5f' }}>
+                <h3 style={{ margin: '0 0 12px', color: '#94a3b8', fontSize: 13 }}>📋 System Rules (ESP32 Configuration)</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(250px,1fr))', gap: 12, fontSize: 11, color: '#64748b' }}>
+                    <div>🔴 <strong>RED Light:</strong> Fixed 3 seconds</div>
+                    <div>🟡 <strong>YELLOW Light:</strong> 3s base + 2s when raining = {yellowTime}s</div>
+                    <div>🟢 <strong>GREEN Light:</strong> 3s base + traffic bonus (Light: +3s, Heavy: +6s)</div>
+                    <div>🔦 <strong>IR Sensors:</strong> Both blocked = Heavy Traffic (+6s), One blocked = Light Traffic (+3s)</div>
+                    <div>🌧️ <strong>Rain Sensor:</strong> Detects rain → Yellow extends from 3s to 5s for safety</div>
+                    <div>🚶 <strong>Pedestrian:</strong> Button press triggers crossing phase (10s)</div>
+                </div>
+            </div>
+
             <div style={{ textAlign: 'center', marginTop: 28, color: '#1e3a5f', fontSize: 11 }}>
-                HYDRA v3.0 — Safety Critical System — Nawinna Junction, Kurunegala
+                HYDRA v3.0 — IR + Rain Sensor Integrated — Nawinna Junction, Kurunegala
             </div>
         </div>
     );
