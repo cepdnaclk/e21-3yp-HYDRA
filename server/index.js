@@ -384,7 +384,6 @@
 
 // setInterval(broadcastFullState, 2000);
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 // server/index.js — HYDRA Smart Traffic Control System (COMPLETE VERSION)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -396,6 +395,7 @@ const mongoose       = require('mongoose');
 const aedes          = require('aedes')();
 const net            = require('net');
 const http           = require('http');
+const path           = require('path');  // ← ADDED for static file serving
 const { Server }     = require('socket.io');
 
 // ── Import our modules ──────────────────────────────────────────────────────
@@ -423,6 +423,12 @@ const MQTT_PORT = parseInt(process.env.MQTT_PORT) || 1883;
 
 app.use(cors({ origin: '*' }));
 app.use(express.json());
+
+// ════════════════════════════════════════════════════════════════════════════
+// STATIC FILE SERVING FOR REACT DASHBOARD (ADDED)
+// ════════════════════════════════════════════════════════════════════════════
+// Serve static files from the React build directory
+app.use(express.static(path.join(__dirname, '../client/build')));
 
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 1: DATABASE CONNECTION
@@ -729,7 +735,7 @@ async function refreshGoogleTraffic() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 7: HTTP API ROUTES (unchanged)
+// SECTION 7: HTTP API ROUTES
 // ════════════════════════════════════════════════════════════════════════════
 app.get('/api/traffic', async (req, res) => {
     try {
@@ -785,7 +791,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 8: SOCKET.IO (unchanged)
+// SECTION 8: SOCKET.IO
 // ════════════════════════════════════════════════════════════════════════════
 io.on('connection', (socket) => {
     console.log('🖥️   Dashboard connected:', socket.id);
@@ -808,7 +814,15 @@ io.on('connection', (socket) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 9: START EVERYTHING
+// SECTION 9: REACT ROUTING (CATCH-ALL) - MUST BE LAST
+// ════════════════════════════════════════════════════════════════════════════
+// This handles all non-API routes and serves the React app
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SECTION 10: START EVERYTHING
 // ════════════════════════════════════════════════════════════════════════════
 mqttServer.listen(MQTT_PORT, () => console.log(`📡  MQTT Broker running on port ${MQTT_PORT}`));
 httpServer.listen(PORT, () => console.log(`✅  API + Dashboard Server running on port ${PORT}`));
