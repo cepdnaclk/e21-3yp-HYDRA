@@ -384,6 +384,7 @@
 
 // setInterval(broadcastFullState, 2000);
 
+
 // ═══════════════════════════════════════════════════════════════════════════
 // server/index.js — HYDRA Smart Traffic Control System (COMPLETE VERSION)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -395,7 +396,7 @@ const mongoose       = require('mongoose');
 const aedes          = require('aedes')();
 const net            = require('net');
 const http           = require('http');
-const path           = require('path');  // ← ADDED for static file serving
+const path           = require('path');
 const { Server }     = require('socket.io');
 
 // ── Import our modules ──────────────────────────────────────────────────────
@@ -403,12 +404,7 @@ const TrafficData    = require('./models/TrafficData');
 const UltrasonicData = require('./models/UltrasonicData');
 const { getAllTrafficConditions } = require('./services/googleTrafficService');
 
-// ⚠️  IMPORTANT: Adjust this import based on how signalDecision.js exports
-// If signalDecision.js uses: module.exports = { makeSignalDecision }
-// then keep: const { makeSignalDecision } = require('./logic/signalDecision');
-// If it uses: module.exports = makeSignalDecision
-// then change to: const makeSignalDecision = require('./logic/signalDecision');
-const { makeSignalDecision } = require('./logic/signalDecision'); // <-- adjust if needed
+const { makeSignalDecision } = require('./logic/signalDecision');
 
 // ── App & Server Setup ──────────────────────────────────────────────────────
 const app        = express();
@@ -425,9 +421,8 @@ app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 // ════════════════════════════════════════════════════════════════════════════
-// STATIC FILE SERVING FOR REACT DASHBOARD (ADDED)
+// STATIC FILE SERVING FOR REACT DASHBOARD
 // ════════════════════════════════════════════════════════════════════════════
-// Serve static files from the React build directory
 app.use(express.static(path.join(__dirname, '../client/build')));
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -462,8 +457,8 @@ let irData       = { North: { ir1: false, ir2: false, queueLevel: 'None' },
                      East:  { ir1: false, ir2: false, queueLevel: 'None' },
                      West:  { ir1: false, ir2: false, queueLevel: 'None' } };
 let piezoData    = { North: false, South: false, East: false, West: false };
-let rainDetected = false;   // ONE rain sensor for all roads
-let yellowTime   = 5;       // Global yellow time (5 normal, 7 in rain)
+let rainDetected = false;
+let yellowTime   = 5;
 let pedStatus    = { North: { requested: false, crossing: false, duration: 0 },
                      South: { requested: false, crossing: false, duration: 0 },
                      East:  { requested: false, crossing: false, duration: 0 },
@@ -533,7 +528,7 @@ aedes.on('publish', async (packet, client) => {
         try {
             const data = JSON.parse(payload);
             rainDetected = data.rainDetected;
-            yellowTime   = rainDetected ? 7 : 5; // 7s in rain, 5s normal
+            yellowTime   = rainDetected ? 7 : 5;
             if (rainDetected) console.log('🌧️ RAIN — yellow extended to 7s');
             io.emit('rainUpdate', { rainDetected, yellowTime });
         } catch (e) { console.error('Rain parse error:', e.message); }
@@ -573,7 +568,7 @@ aedes.on('publish', async (packet, client) => {
 // ════════════════════════════════════════════════════════════════════════════
 
 function sendCommandToRoad(road, signal, greenTime, yellowTimeOverride) {
-    const yt = yellowTimeOverride || yellowTime; // uses rain-adjusted yellow time
+    const yt = yellowTimeOverride || yellowTime;
     const msg = JSON.stringify({
         signal,
         greenTime:  greenTime || 5,
@@ -601,7 +596,7 @@ function setAllRoadsRed() {
 function decideNextWinner() {
     latestDecision = makeSignalDecision(
         sensorData, googleTraffic, sensorWorking, googleWorking,
-        irData, piezoData   // ← pass new sensor data
+        irData, piezoData
     );
     io.emit('newDecision', latestDecision);
     console.log(`🧠 Decision: ${latestDecision.winner} → GREEN (${latestDecision.greenDuration}s) Mode: ${latestDecision.mode}`);
@@ -658,7 +653,6 @@ function runOneCycle() {
     }, 500);
 }
 
-// Countdown and broadcast functions (unchanged)
 let countdownIntervals = {};
 
 function startCountdown(road, phase, seconds) {
@@ -816,9 +810,14 @@ io.on('connection', (socket) => {
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 9: REACT ROUTING (CATCH-ALL) - MUST BE LAST
 // ════════════════════════════════════════════════════════════════════════════
-// This handles all non-API routes and serves the React app
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
+// FIXED: Changed from '*' to '/*' to avoid path-to-regexp error
+app.get('/*', (req, res) => {
+    // Only serve index.html for non-API routes
+    if (!req.path.startsWith('/api')) {
+        res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
+    } else {
+        res.status(404).json({ error: 'API endpoint not found' });
+    }
 });
 
 // ════════════════════════════════════════════════════════════════════════════
