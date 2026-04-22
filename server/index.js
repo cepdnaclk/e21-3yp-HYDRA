@@ -807,18 +807,6 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => console.log('🖥️   Dashboard disconnected:', socket.id));
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// SECTION 9: REACT ROUTING (CATCH-ALL) - MUST BE LAST
-// ════════════════════════════════════════════════════════════════════════════
-// FIXED: Changed from '*' to '/*' to avoid path-to-regexp error
-app.get('/*', (req, res) => {
-    // Only serve index.html for non-API routes
-    if (!req.path.startsWith('/api')) {
-        res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
-    } else {
-        res.status(404).json({ error: 'API endpoint not found' });
-    }
-});
 
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 10: START EVERYTHING
