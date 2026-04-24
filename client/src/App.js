@@ -934,7 +934,9 @@ function App() {
     };
 
     const winner = decision?.winner;
-    
+    const activePedRequests = ROADS.filter(road => pedStatus[road]?.requested).length;
+    const activePedCrossings = ROADS.filter(road => pedStatus[road]?.crossing).length;
+
     // Get traffic density color
     const getDensityColor = (density) => {
         switch(density) {
@@ -942,6 +944,15 @@ function App() {
             case 'Light': return '#fde047';
             default: return '#4ade80';
         }
+    };
+
+    const getPedMessage = (ped, phase) => {
+        if (ped.crossing) return `Pedestrian crossing active (${ped.duration}s)`;
+        if (ped.requested && phase === 'RED') return 'Requested during RED → immediate crossing';
+        if (ped.requested && phase === 'YELLOW') return 'Requested during YELLOW → countdown then crossing';
+        if (ped.requested && phase === 'GREEN') return 'Requested during GREEN → waiting until green ends';
+        if (ped.requested) return 'Pedestrian waiting';
+        return 'No pedestrian request';
     };
 
     // Sensor accuracy score: how many sensors active / total possible
@@ -972,6 +983,9 @@ function App() {
                     </span>
                     <span style={{ background: '#1e293b', color: '#94a3b8', padding: '3px 12px', borderRadius: 20, fontSize: 12 }}>
                         Mode: {decision?.mode || 'Starting...'}
+                    </span>
+                    <span style={{ background: '#1e293b', color: '#94a3b8', padding: '3px 12px', borderRadius: 20, fontSize: 12 }}>
+                        🚶 Pedestrian: {activePedRequests} waiting, {activePedCrossings} crossing
                     </span>
                     {/* Rain indicator - shows correct yellow timing */}
                     <WeatherBadge isRaining={rainDetected} yellowTime={yellowTime} />
@@ -1145,12 +1159,15 @@ function App() {
                                         border: `1px solid ${ped.crossing ? '#3b82f6' : ped.requested ? '#f59e0b' : '#1e293b'}`,
                                         borderRadius: 8, padding: 8, marginBottom: 8
                                     }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                             <span>🚶</span>
                                             <span style={{ fontSize: 11, color: '#64748b' }}>Pedestrian</span>
-                                            {ped.crossing && <span style={{ fontSize: 10, color: '#60a5fa', fontWeight: 'bold' }}>● CROSSING ({ped.duration}s)</span>}
+                                            {ped.crossing && <span style={{ fontSize: 10, color: '#60a5fa', fontWeight: 'bold' }}>● CROSSING</span>}
                                             {ped.requested && !ped.crossing && <span style={{ fontSize: 10, color: '#fde047', fontWeight: 'bold' }}>● WAITING</span>}
                                             {!ped.requested && !ped.crossing && <span style={{ fontSize: 10, color: '#475569' }}>Idle</span>}
+                                        </div>
+                                        <div style={{ marginTop: 6, fontSize: 11, color: ped.crossing ? '#60a5fa' : ped.requested ? '#fde047' : '#94a3b8' }}>
+                                            {getPedMessage(ped, phase)}
                                         </div>
                                     </div>
 
@@ -1219,7 +1236,7 @@ function App() {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                             <thead>
                                 <tr style={{ borderBottom: '1px solid #1e3a5f' }}>
-                                    {['Rank','Road','Distance','IR Traffic','Rain','Next Traffic','Score','Green Time','LED'].map(h => (
+                                    {['Rank','Road','Distance','IR Traffic','Rain','Next Traffic','Pedestrian','Score','Green Time','LED'].map(h => (
                                         <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#475569', fontSize: 10, letterSpacing: 1 }}>{h}</th>
                                     ))}
                                 </tr>
@@ -1239,6 +1256,9 @@ function App() {
                                                 {rainDetected ? '🌧️ Rain (5s Yellow)' : '☀️ Dry (3s Yellow)'}
                                             </td>
                                             <td style={{ padding: '8px 10px' }}><TrafficBadge level={p.traffic} /></td>
+                                            <td style={{ padding: '8px 10px', color: p.road && pedStatus[p.road] && pedStatus[p.road].crossing ? '#60a5fa' : p.road && pedStatus[p.road] && pedStatus[p.road].requested ? '#fde047' : '#94a3b8', fontWeight: 'bold' }}>
+                                                {pedStatus[p.road]?.crossing ? '🚶 CROSSING' : pedStatus[p.road]?.requested ? '🟡 WAITING' : 'Idle'}
+                                            </td>
                                             <td style={{ padding: '8px 10px', color: p.score > 0 ? '#4ade80' : p.score < 0 ? '#f87171' : '#94a3b8', fontWeight: 'bold' }}>{p.score?.toFixed(1)}</td>
                                             <td style={{ padding: '8px 10px', color: '#94a3b8' }}>{p.greenTime ? `${Math.round(p.greenTime)}s` : '—'}</td>
                                             <td style={{ padding: '8px 10px' }}>

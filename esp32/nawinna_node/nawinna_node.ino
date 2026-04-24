@@ -287,6 +287,15 @@ const int   MQTT_PORT   = 1883;
 #define PED_RED_LED    19
 #define PED_GREEN_LED  21
 
+// 7-segment countdown display pins (change these if your wiring differs)
+#define SEG_A          2
+#define SEG_B          15
+#define SEG_C          16
+#define SEG_D          17
+#define SEG_E          22
+#define SEG_F          23
+#define SEG_G          4
+
 // ── TIMING CONSTANTS (MATCH ESP32 BASE CODE) ────────────────────────────────
 // Red is always fixed at 3 seconds
 const unsigned long BASE_RED_TIME      = 3000;  // 3 seconds
@@ -324,6 +333,8 @@ unsigned long currentRedTime   = BASE_RED_TIME;
 // ── PEDESTRIAN STATE ─────────────────────────────────────────────────────────
 bool          pedRequested     = false;
 bool          pedCrossing      = false;
+bool          afterPedestrianCrossing = false;
+bool          yellowCountdownDisplayed = false;
 unsigned long pedStartMs       = 0;
 const int     PED_CROSS_TIME   = 10; // seconds for pedestrian to cross
 
@@ -359,6 +370,106 @@ void publishState(String state) {
     serializeJson(doc, buf);
     mqttClient.publish(PUB_STATE.c_str(), buf, true);
     Serial.println("💡 State → " + state);
+}
+
+void clearDisplay() {
+    digitalWrite(SEG_A, LOW);
+    digitalWrite(SEG_B, LOW);
+    digitalWrite(SEG_C, LOW);
+    digitalWrite(SEG_D, LOW);
+    digitalWrite(SEG_E, LOW);
+    digitalWrite(SEG_F, LOW);
+    digitalWrite(SEG_G, LOW);
+}
+
+void displayDigit(int num) {
+    clearDisplay();
+    switch (num) {
+        case 0:
+            digitalWrite(SEG_A, HIGH);
+            digitalWrite(SEG_B, HIGH);
+            digitalWrite(SEG_C, HIGH);
+            digitalWrite(SEG_D, HIGH);
+            digitalWrite(SEG_E, HIGH);
+            digitalWrite(SEG_F, HIGH);
+            break;
+        case 1:
+            digitalWrite(SEG_B, HIGH);
+            digitalWrite(SEG_C, HIGH);
+            break;
+        case 2:
+            digitalWrite(SEG_A, HIGH);
+            digitalWrite(SEG_B, HIGH);
+            digitalWrite(SEG_D, HIGH);
+            digitalWrite(SEG_E, HIGH);
+            digitalWrite(SEG_G, HIGH);
+            break;
+        case 3:
+            digitalWrite(SEG_A, HIGH);
+            digitalWrite(SEG_B, HIGH);
+            digitalWrite(SEG_C, HIGH);
+            digitalWrite(SEG_D, HIGH);
+            digitalWrite(SEG_G, HIGH);
+            break;
+        case 4:
+            digitalWrite(SEG_B, HIGH);
+            digitalWrite(SEG_C, HIGH);
+            digitalWrite(SEG_F, HIGH);
+            digitalWrite(SEG_G, HIGH);
+            break;
+        case 5:
+            digitalWrite(SEG_A, HIGH);
+            digitalWrite(SEG_C, HIGH);
+            digitalWrite(SEG_D, HIGH);
+            digitalWrite(SEG_F, HIGH);
+            digitalWrite(SEG_G, HIGH);
+            break;
+        case 6:
+            digitalWrite(SEG_A, HIGH);
+            digitalWrite(SEG_C, HIGH);
+            digitalWrite(SEG_D, HIGH);
+            digitalWrite(SEG_E, HIGH);
+            digitalWrite(SEG_F, HIGH);
+            digitalWrite(SEG_G, HIGH);
+            break;
+        case 7:
+            digitalWrite(SEG_A, HIGH);
+            digitalWrite(SEG_B, HIGH);
+            digitalWrite(SEG_C, HIGH);
+            break;
+        case 8:
+            digitalWrite(SEG_A, HIGH);
+            digitalWrite(SEG_B, HIGH);
+            digitalWrite(SEG_C, HIGH);
+            digitalWrite(SEG_D, HIGH);
+            digitalWrite(SEG_E, HIGH);
+            digitalWrite(SEG_F, HIGH);
+            digitalWrite(SEG_G, HIGH);
+            break;
+        case 9:
+            digitalWrite(SEG_A, HIGH);
+            digitalWrite(SEG_B, HIGH);
+            digitalWrite(SEG_C, HIGH);
+            digitalWrite(SEG_D, HIGH);
+            digitalWrite(SEG_F, HIGH);
+            digitalWrite(SEG_G, HIGH);
+            break;
+    }
+}
+
+void startCountdown(int seconds) {
+    if (seconds <= 0) {
+        clearDisplay();
+        return;
+    }
+    for (int remaining = seconds; remaining >= 1; remaining--) {
+        displayDigit(remaining > 9 ? 9 : remaining);
+        unsigned long end = millis() + 1000UL;
+        while (millis() < end) {
+            delay(1);
+        }
+    }
+    clearDisplay();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -397,10 +508,26 @@ void updateTimings() {
 // PHASE STATE MACHINE (non-blocking)
 // ─────────────────────────────────────────────────────────────────────────────
 void updateLightPhase() {
+    if (currentPhase == PHASE_RED && pedRequested && !pedCrossing) {
+        Serial.println("🚶 Button pressed during RED — immediate crossing");
+        startPedestrianCrossing();
+        return;
+    }
+
+    if (currentPhase == PHASE_YELLOW && pedRequested && !pedCrossing && !yellowCountdownDisplayed) {
+        unsigned long remainingMs = (phaseEndMs > millis() ? phaseEndMs - millis() : 0);
+        int remainingSec = remainingMs ? ((remainingMs + 999) / 1000) : 0;
+        if (remainingSec > 0) {
+            Serial.println("⏳ Pedestrian waiting during YELLOW — showing countdown");
+            startCountdown(remainingSec);
+        }
+        yellowCountdownDisplayed = true;
+        return;
+    }
+
     if (millis() < phaseEndMs) return;
     
     if (currentPhase == PHASE_RED) {
-        // Red finished, start Green
         currentPhase = PHASE_GREEN;
         phaseEndMs = millis() + currentGreenTime;
         setTrafficLight(PHASE_GREEN);
@@ -408,31 +535,32 @@ void updateLightPhase() {
         Serial.println("🟢 GREEN for " + String(currentGreenTime / 1000) + "s");
         
     } else if (currentPhase == PHASE_GREEN) {
-        // Green finished, start Yellow
         currentPhase = PHASE_YELLOW;
         phaseEndMs = millis() + currentYellowTime;
         setTrafficLight(PHASE_YELLOW);
         publishState("YELLOW");
         Serial.println("🟡 YELLOW for " + String(currentYellowTime / 1000) + "s");
-        
-        // Check if pedestrian is waiting
+        yellowCountdownDisplayed = false;
+
         if (pedRequested && !pedCrossing) {
             Serial.println("🚶 Pedestrian waiting — will cross after yellow");
         }
         
     } else if (currentPhase == PHASE_YELLOW) {
-        // Yellow finished
         if (pedRequested && !pedCrossing) {
-            // Serve pedestrian crossing
             startPedestrianCrossing();
-        } else {
-            // Go back to Red
-            currentPhase = PHASE_RED;
-            phaseEndMs = millis() + currentRedTime;
+        } else if (afterPedestrianCrossing) {
+            afterPedestrianCrossing = false;
+            currentPhase = PHASE_GREEN;
+            phaseEndMs = millis() + currentGreenTime;
+            setTrafficLight(PHASE_GREEN);
+            publishState("GREEN");
+            Serial.println("🟢 GREEN for " + String(currentGreenTime / 1000) + "s");
             setTrafficLight(PHASE_RED);
             publishState("RED");
             Serial.println("🔴 RED for " + String(currentRedTime / 1000) + "s");
         }
+        yellowCountdownDisplayed = false;
     }
 }
 
@@ -443,17 +571,17 @@ void startPedestrianCrossing() {
     Serial.println("🚶 PEDESTRIAN CROSSING STARTED");
     pedCrossing = true;
     pedRequested = false;
+    afterPedestrianCrossing = false;
+    yellowCountdownDisplayed = false;
     currentPhase = PHASE_RED;
     phaseEndMs = millis() + (PED_CROSS_TIME * 1000UL);
     
     setTrafficLight(PHASE_RED);
     publishState("RED");
     
-    // Turn pedestrian green ON
     digitalWrite(PED_RED_LED,   LOW);
     digitalWrite(PED_GREEN_LED, HIGH);
     
-    // Notify server
     StaticJsonDocument<128> doc;
     doc["road"]     = ROAD_ID;
     doc["crossing"] = true;
@@ -468,12 +596,10 @@ void startPedestrianCrossing() {
 void updatePedestrianCrossing() {
     if (!pedCrossing) return;
     if (millis() - pedStartMs >= (PED_CROSS_TIME * 1000UL)) {
-        // Crossing done
         pedCrossing = false;
         digitalWrite(PED_GREEN_LED, LOW);
         digitalWrite(PED_RED_LED,   HIGH);
         
-        // Notify server
         StaticJsonDocument<128> doc;
         doc["road"]     = ROAD_ID;
         doc["crossing"] = false;
@@ -482,13 +608,14 @@ void updatePedestrianCrossing() {
         serializeJson(doc, buf);
         mqttClient.publish(PUB_PED.c_str(), buf);
         
-        Serial.println("✅ Pedestrian crossing finished — returning to RED");
+        Serial.println("✅ Pedestrian crossing finished — moving to YELLOW then GREEN");
         
-        // Start RED phase
-        currentPhase = PHASE_RED;
-        phaseEndMs = millis() + currentRedTime;
-        setTrafficLight(PHASE_RED);
-        publishState("RED");
+        afterPedestrianCrossing = true;
+        currentPhase = PHASE_YELLOW;
+        phaseEndMs = millis() + currentYellowTime;
+        setTrafficLight(PHASE_YELLOW);
+        publishState("YELLOW");
+        yellowCountdownDisplayed = false;
     }
 }
 
@@ -632,7 +759,14 @@ void publishRain() {
 void checkPedestrianButton() {
     if (digitalRead(PED_BUTTON) == LOW && !pedRequested && !pedCrossing) {
         pedRequested = true;
-        Serial.println("🚶 Pedestrian button pressed — will cross after current green phase");
+        if (currentPhase == PHASE_RED) {
+            Serial.println("🚶 Pedestrian button pressed during RED — immediate crossing");
+            startPedestrianCrossing();
+        } else if (currentPhase == PHASE_YELLOW) {
+            Serial.println("🚶 Pedestrian button pressed during YELLOW — countdown then crossing");
+        } else {
+            Serial.println("🚶 Pedestrian button pressed during GREEN — waiting until green finishes");
+        }
         
         StaticJsonDocument<128> doc;
         doc["road"]      = ROAD_ID;
@@ -736,6 +870,13 @@ void setup() {
     pinMode(GREEN_LED,   OUTPUT);
     pinMode(PED_RED_LED,   OUTPUT);
     pinMode(PED_GREEN_LED, OUTPUT);
+    pinMode(SEG_A, OUTPUT);
+    pinMode(SEG_B, OUTPUT);
+    pinMode(SEG_C, OUTPUT);
+    pinMode(SEG_D, OUTPUT);
+    pinMode(SEG_E, OUTPUT);
+    pinMode(SEG_F, OUTPUT);
+    pinMode(SEG_G, OUTPUT);
     
     // Input pins
     pinMode(ECHO_PIN,    INPUT);
@@ -749,6 +890,7 @@ void setup() {
     setTrafficLight(PHASE_RED);
     digitalWrite(PED_RED_LED,   HIGH);
     digitalWrite(PED_GREEN_LED, LOW);
+    clearDisplay();
     
     // Initial sensor readings
     ir1Blocked = (digitalRead(IR_SENSOR_1) == LOW);

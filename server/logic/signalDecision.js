@@ -287,6 +287,7 @@ const MAX_GREEN_TIME  = 60;
 const DEFAULT_GREEN   = 5;
 const FALLBACK_GREEN  = 5;
 const SENSOR_MAX_RANGE = 400; // cm
+const PED_CROSS_TIME  = 10; // seconds for pedestrian crossing
 
 // Ultrasonic threshold — if < 20cm, switch to IR+Piezo mode
 const ULTRASONIC_CLOSE_THRESHOLD = 20;
@@ -426,15 +427,15 @@ function makeSignalDecision(sensorData, trafficData, sensorWorking, googleWorkin
             }
 
             // Pedestrian request increases priority
-            if (pedRoad.requested || pedRoad.crossing) {
-                score += 30;
-                // Extend green time for pedestrian crossing
-                if (pedRoad.crossing) {
-                    greenTime = Math.max(greenTime, 10);
-                }
+            if (pedRoad.crossing) {
+                // Keep car signal RED while pedestrian crossing is active
+                score -= 1000;
+                greenTime = 0;
+            } else if (pedRoad.requested) {
+                score += 100;
             }
 
-            return { 
+            return {
                 road, 
                 distance: dist, 
                 traffic, 
