@@ -555,15 +555,7 @@ io.on('connection', (socket) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 9: CATCH-ALL ROUTE FOR REACT ROUTING (FIXED)
-// ════════════════════════════════════════════════════════════════════════════
-// FIX: Changed from app.get('*' to app.get('/*' to avoid path-to-regexp error
-app.get('/*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// SECTION 10: START EVERYTHING
+// SECTION 9: START EVERYTHING
 // ════════════════════════════════════════════════════════════════════════════
 mqttServer.listen(MQTT_PORT, () => console.log(`📡 MQTT Broker running on port ${MQTT_PORT}`));
 httpServer.listen(PORT, () => console.log(`✅ API + Dashboard Server running on port ${PORT}`));
