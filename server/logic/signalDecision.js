@@ -1,44 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // server/logic/signalDecision.js — HYDRA Dual-Mode Decision Engine
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// TWO SENSOR SCENARIOS — selected per road at decision time:
-//
-//  SCENARIO A — ULTRASONIC MODE  (distance >= 20cm)
-//    Used when: vehicle is far from stop line, no vehicle in IR range,
-//               pedestrian zone is clear (>20cm means beyond crossing zone)
-//    Green time: Distance + Google Traffic formula (original BOTH mode)
-//    Sensors:    Ultrasonic + Google Traffic + Pedestrian
-//    Typical:    Midnight, light traffic, open road conditions
-//
-//  SCENARIO B — IR MODE          (distance < 20cm)
-//    Used when: vehicle detected within 20cm — could be a car in IR range
-//               OR a pedestrian in the crossing zone (10–20cm).
-//               We switch to IR because ultrasonic cannot distinguish
-//               a pedestrian from a vehicle at this range.
-//    Green time: IR density + Piezo heavy vehicle bonus
-//    Sensors:    IR x2 + Piezo + Rain (yellow) + Pedestrian
-//    Typical:    Daytime, queued traffic at stop line
-//
-// PHYSICAL LAYOUT (distance from stop line, measured backward into road):
-//   0–5cm   → IR Sensor 1  (blocked alone = Light traffic)
-//   5–10cm  → IR Sensor 2  (both blocked  = Heavy traffic)
-//   10–20cm → Pedestrian crossing zone (excluded from IR vehicle counting)
-//   >20cm   → Open road    → Ultrasonic + Google mode
-//
-// YELLOW TIME (both modes):
-//   Dry:   3s base
-//   Rain:  3s + 2s = 5s   (rain sensor always affects yellow regardless of mode)
-//
-// GREEN TIME:
-//   Ultrasonic mode: calculateGreenTimeUltrasonic(distance, googleTraffic)
-//   IR mode:         calculateGreenTimeIR(ir1, ir2, piezo)
-//     - No IR blocked  → 3s  (base)
-//     - IR1 only       → 6s  (3s base + 3s light bonus)
-//     - Both IR        → 9s  (3s base + 6s heavy bonus)
-//     - Both IR + Piezo→ 14s (9s + 5s heavy vehicle bonus)
-//
-// RED TIME: Fixed 3s always.
+// UPDATED: Matches ESP32 pedestrian and piezo logic from working reference
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Timing constants (must match ESP32 firmware exactly) ────────────────────
@@ -64,7 +26,7 @@ const IR_MODE_THRESHOLD      = 20;  // cm — below this → IR mode, above → 
 // Fallback (no data at all)
 const FALLBACK_GREEN         = 5;
 
-// Pedestrian crossing duration
+// Pedestrian crossing duration (matches ESP32: 10 seconds)
 const PED_CROSS_TIME         = 10;
 
 // Yellow timing
@@ -72,79 +34,67 @@ const YELLOW_TIME_DRY        = BASE_YELLOW_TIME;                       // 3s
 const YELLOW_TIME_RAIN       = BASE_YELLOW_TIME + RAIN_YELLOW_EXTRA;  // 5s
 
 // ── Score weights ───────────────────────────────────────────────────────────
-// Used in ULTRASONIC mode only — IR mode uses a fixed table, not scoring
 const WEIGHT_DIST_VERY_CLOSE = 40;   // vehicle ≤50cm
 const WEIGHT_DIST_MEDIUM     = 20;   // vehicle ≤200cm
 const WEIGHT_GOOGLE_HEAVY    = -50;  // next intersection jammed → penalise
 const WEIGHT_GOOGLE_MEDIUM   = -15;
 const WEIGHT_GOOGLE_LIGHT    = +10;  // next intersection clear  → reward
 
+// IR mode score weights
+const IR_SCORE_HEAVY         = 50;   // Both IR blocked
+const IR_SCORE_LIGHT         = 25;   // Only IR1 blocked
+const IR_SCORE_NONE          = 5;    // No IR blocked
+const IR_SCORE_PIEZO_BONUS   = 15;   // Extra for heavy vehicle
+
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 1: MODE SELECTOR
-// Called once per road per decision cycle.
-// Returns 'IR' if distance < 20cm, 'ULTRASONIC' otherwise.
-// Note: null distance (sensor offline) → treated as no vehicle → ULTRASONIC.
 // ════════════════════════════════════════════════════════════════════════════
 function selectSensorMode(distanceCm) {
     if (distanceCm === null || distanceCm === undefined) return 'ULTRASONIC';
-    if (distanceCm >= SENSOR_MAX_RANGE) return 'ULTRASONIC'; // no vehicle detected
+    if (distanceCm >= SENSOR_MAX_RANGE) return 'ULTRASONIC';
     if (distanceCm < IR_MODE_THRESHOLD) return 'IR';
     return 'ULTRASONIC';
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 2A: ULTRASONIC MODE — Green time calculation
-// Formula: distance factor + Google Traffic adjustment
-// Same as original BOTH mode formula. Distance determines urgency,
-// Google Traffic adjusts up or down based on downstream capacity.
 // ════════════════════════════════════════════════════════════════════════════
 function calculateGreenTimeUltrasonic(distanceCm, googleTraffic) {
-    // No vehicle in range — use Google Traffic alone for timing estimate
     if (distanceCm === null || distanceCm >= SENSOR_MAX_RANGE) {
         if (googleTraffic === 'Heavy')  return 40;
         if (googleTraffic === 'Medium') return 25;
         if (googleTraffic === 'Light')  return MIN_GREEN_ULTRASONIC;
-        return DEFAULT_GREEN; // Unknown Google → use default
+        return DEFAULT_GREEN;
     }
 
-    // Vehicle detected at distance > 20cm:
-    // Further away = more time needed to reach stop line and clear junction
-    const distanceFactor = (distanceCm / SENSOR_MAX_RANGE) * 20; // 0–20s range
+    const distanceFactor = (distanceCm / SENSOR_MAX_RANGE) * 20;
     let greenTime = MIN_GREEN_ULTRASONIC + distanceFactor;
 
-    // Google Traffic adjustment on top of distance-based time
     if (googleTraffic === 'Heavy') {
-        // Downstream jammed — reduce green to avoid pushing cars into gridlock
         greenTime = Math.max(greenTime * 0.7, MIN_GREEN_ULTRASONIC);
     } else if (googleTraffic === 'Light') {
-        // Downstream clear — extend green, cars can flow through
         greenTime = Math.min(greenTime * 1.2, MAX_GREEN_ULTRASONIC);
     }
-    // 'Medium' and 'Unknown' → no adjustment
 
     return Math.round(Math.min(Math.max(greenTime, MIN_GREEN_ULTRASONIC), MAX_GREEN_ULTRASONIC));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 2B: ULTRASONIC MODE — Priority score for road ranking
-// Used to determine WHICH road wins GREEN, not how long.
+// SECTION 2B: ULTRASONIC MODE — Priority score
 // ════════════════════════════════════════════════════════════════════════════
 function calculateScoreUltrasonic(distanceCm, googleTraffic) {
     let score = 0;
 
-    // Distance component — closer vehicle = higher urgency
     if (distanceCm !== null && distanceCm < SENSOR_MAX_RANGE) {
         if (distanceCm <= 50)       score += WEIGHT_DIST_VERY_CLOSE;
         else if (distanceCm <= 200) score += WEIGHT_DIST_MEDIUM;
-        else score += (SENSOR_MAX_RANGE - distanceCm) / 20; // small bonus for far cars
+        else score += (SENSOR_MAX_RANGE - distanceCm) / 20;
     }
 
-    // Google Traffic component — penalise roads leading to jammed intersections
     switch (googleTraffic) {
         case 'Heavy':  score += WEIGHT_GOOGLE_HEAVY;  break;
         case 'Medium': score += WEIGHT_GOOGLE_MEDIUM; break;
         case 'Light':  score += WEIGHT_GOOGLE_LIGHT;  break;
-        // 'Unknown' → neutral, no change
     }
 
     return score;
@@ -152,62 +102,37 @@ function calculateScoreUltrasonic(distanceCm, googleTraffic) {
 
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 3A: IR MODE — Green time calculation
-// Fixed table based on IR sensor state + piezo heavy vehicle detection.
-// Google Traffic is NOT used for green time in IR mode —
-// the queue at the stop line is the direct signal, no inference needed.
-//
-// IR sensor placement (from stop line backward into road):
-//   IR1 at 5cm  — light traffic marker
-//   IR2 at 10cm — heavy traffic marker
-//   Pedestrian crossing zone: 10–20cm (excluded from IR vehicle counting)
 // ════════════════════════════════════════════════════════════════════════════
 function calculateGreenTimeIR(ir1Blocked, ir2Blocked, piezoHeavy) {
-    let greenTime = BASE_GREEN_TIME; // 3s minimum
+    let greenTime = BASE_GREEN_TIME;
 
     if (ir1Blocked && ir2Blocked) {
-        // Both sensors blocked → Heavy traffic queue (cars backed up >10cm)
-        greenTime = BASE_GREEN_TIME + HEAVY_TRAFFIC_BONUS; // 3 + 6 = 9s
-
+        greenTime = BASE_GREEN_TIME + HEAVY_TRAFFIC_BONUS;
         if (piezoHeavy) {
-            // Heavy vehicle (truck/bus) detected on top of heavy queue
-            // Needs extra time to clear the junction
-            greenTime += PIEZO_HEAVY_BONUS; // 9 + 5 = 14s
+            greenTime += PIEZO_HEAVY_BONUS;
         }
-
     } else if (ir1Blocked) {
-        // Only IR1 blocked → Light traffic (1–2 cars near stop line)
-        // IR2 clear means queue is short, no piezo bonus here
-        greenTime = BASE_GREEN_TIME + LIGHT_TRAFFIC_BONUS; // 3 + 3 = 6s
-
-    } else {
-        // Neither IR blocked → no vehicle in IR range
-        // (ultrasonic detected something <20cm — likely pedestrian in crossing zone)
-        greenTime = BASE_GREEN_TIME; // 3s base, don't extend for pedestrians
+        greenTime = BASE_GREEN_TIME + LIGHT_TRAFFIC_BONUS;
     }
 
     return greenTime;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 3B: IR MODE — Priority score for road ranking
-// Uses IR density as the primary score signal.
-// Google Traffic is still used as a penalty/bonus for road ranking
-// (we still don't want to push cars into a downstream jam).
+// SECTION 3B: IR MODE — Priority score
 // ════════════════════════════════════════════════════════════════════════════
 function calculateScoreIR(ir1Blocked, ir2Blocked, piezoHeavy, googleTraffic) {
     let score = 0;
 
-    // IR density component
     if (ir1Blocked && ir2Blocked) {
-        score += 50; // Heavy queue — high priority
-        if (piezoHeavy) score += 15; // Heavy vehicle on top → even higher priority
+        score = IR_SCORE_HEAVY;
+        if (piezoHeavy) score += IR_SCORE_PIEZO_BONUS;
     } else if (ir1Blocked) {
-        score += 25; // Light queue — moderate priority
+        score = IR_SCORE_LIGHT;
     } else {
-        score += 5;  // No vehicles in IR range (pedestrian zone detection only)
+        score = IR_SCORE_NONE;
     }
 
-    // Google Traffic still used for ranking (penalise roads into jams)
     switch (googleTraffic) {
         case 'Heavy':  score += WEIGHT_GOOGLE_HEAVY;  break;
         case 'Medium': score += WEIGHT_GOOGLE_MEDIUM; break;
@@ -218,9 +143,7 @@ function calculateScoreIR(ir1Blocked, ir2Blocked, piezoHeavy, googleTraffic) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 4: SYSTEM MODE (determines data availability, not sensor scenario)
-// This is separate from the per-road sensor scenario.
-// BOTH / SENSOR_ONLY / GOOGLE_ONLY / FALLBACK
+// SECTION 4: SYSTEM MODE
 // ════════════════════════════════════════════════════════════════════════════
 function determineSystemMode(sensorWorking, googleWorking) {
     const anySensor = Object.values(sensorWorking || {}).some(v => v === true);
@@ -232,25 +155,71 @@ function determineSystemMode(sensorWorking, googleWorking) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 5: MAIN DECISION FUNCTION
-// Called by server/index.js every cycle.
-// For each road, reads the current ultrasonic distance AT DECISION TIME,
-// selects the sensor scenario (IR or Ultrasonic), computes score + green time.
+// SECTION 5: PEDESTRIAN STATE MANAGEMENT
+// Matches ESP32 pedestrian logic:
+// - Button during RED → Immediate crossing
+// - Button during YELLOW → Countdown remaining, then crossing
+// - Button during GREEN → Set flag, crossing after YELLOW
+// - After crossing → Skip RED (skipRedAfterCrossing = true)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Determines if a road should be in pedestrian crossing state
+ * Based on the pedestrian status from ESP32
+ */
+function isRoadCrossing(pedStatus, road) {
+    const ped = pedStatus[road] || {};
+    return ped.crossing === true;
+}
+
+/**
+ * Determines if a road has a pending pedestrian request
+ */
+function hasPedestrianRequest(pedStatus, road) {
+    const ped = pedStatus[road] || {};
+    return ped.requested === true;
+}
+
+/**
+ * Gets pedestrian crossing remaining time
+ */
+function getPedestrianRemainingTime(pedStatus, road) {
+    const ped = pedStatus[road] || {};
+    return ped.duration || 0;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SECTION 6: PIEZO STATE MANAGEMENT
+// Matches ESP32 piezo logic:
+// - Vibration detected → extendNextGreen = true
+// - Next GREEN gets +5 seconds
+// - Flag cleared after applying
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Checks if a road has pending piezo extension for next GREEN
+ */
+function hasPiezoExtension(piezoData, road) {
+    return piezoData[road] === true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SECTION 7: MAIN DECISION FUNCTION
 // ════════════════════════════════════════════════════════════════════════════
 function makeSignalDecision(
     sensorData,    // { North: distanceCm, South: ..., East: ..., West: ... }
-    trafficData,   // { North: 'Heavy'|'Medium'|'Light'|'Unknown', ... } from Google
+    trafficData,   // { North: 'Heavy'|'Medium'|'Light'|'Unknown', ... }
     sensorWorking, // { North: bool, ... }
     googleWorking, // bool
     irData,        // { North: { ir1Blocked, ir2Blocked, queueLevel }, ... }
-    piezoData,     // { North: bool, ... }  true = heavy vehicle detected
+    piezoData,     // { North: bool, ... }  true = heavy vehicle detected (extends next GREEN)
     rainDetected,  // bool
     pedStatus      // { North: { requested, crossing, duration }, ... }
 ) {
     const ROADS      = ['North', 'South', 'East', 'West'];
     const systemMode = determineSystemMode(sensorWorking || {}, googleWorking || false);
 
-    // Yellow time — rain always affects this, regardless of sensor scenario
+    // Yellow time — rain always affects this
     const currentYellowTime = rainDetected ? YELLOW_TIME_RAIN : YELLOW_TIME_DRY;
 
     // Safe defaults
@@ -270,20 +239,21 @@ function makeSignalDecision(
             ir2Blocked:      false,
             piezoHeavy:      false,
             traffic:         'Unknown',
-            score:           ROADS.length - i, // rotate North→South→East→West
+            score:           ROADS.length - i,
             greenTime:       FALLBACK_GREEN,
             yellowTime:      currentYellowTime,
-            mode:            'FALLBACK'
+            mode:            'FALLBACK',
+            pedestrian:      { requested: false, crossing: false, duration: 0 },
+            piezoExtension:  false
         }));
 
     // ── GOOGLE ONLY: sensors all offline ─────────────────────────────────────
     } else if (systemMode === 'GOOGLE_ONLY') {
         priorities = ROADS.map(road => {
             const google = (trafficData || {})[road] || 'Unknown';
-            // No ultrasonic data → can't determine sensor scenario
-            // Use Google-only scoring and timing
-            const score     = calculateScoreUltrasonic(null, google);
+            const score = calculateScoreUltrasonic(null, google);
             const greenTime = calculateGreenTimeUltrasonic(null, google);
+            
             return {
                 road,
                 sensorScenario: 'GOOGLE_ONLY',
@@ -295,84 +265,83 @@ function makeSignalDecision(
                 score,
                 greenTime,
                 yellowTime:      currentYellowTime,
-                mode:            'GOOGLE_ONLY'
+                mode:            'GOOGLE_ONLY',
+                pedestrian:      { requested: false, crossing: false, duration: 0 },
+                piezoExtension:  false
             };
         });
 
     // ── SENSOR_ONLY or BOTH: main dual-scenario logic ─────────────────────
     } else {
         priorities = ROADS.map(road => {
-            // Read current distance AT THIS DECISION MOMENT
-            const rawDist   = sensorData[road];
+            // Read current distance
+            const rawDist = sensorData[road];
             const distanceCm = (rawDist === undefined || rawDist === null || rawDist >= SENSOR_MAX_RANGE)
                                 ? null
                                 : rawDist;
 
-            const google    = (trafficData || {})[road] || 'Unknown';
-            const irRoad    = ir[road]    || { ir1Blocked: false, ir2Blocked: false };
-            const piezoHeavy = piezo[road] || false;
-            const pedRoad   = ped[road]    || { requested: false, crossing: false, duration: 0 };
-
-            // ── SELECT SENSOR SCENARIO FOR THIS ROAD ──────────────────────
+            const google = (trafficData || {})[road] || 'Unknown';
+            const irRoad = ir[road] || { ir1Blocked: false, ir2Blocked: false };
+            const piezoHeavy = piezo[road] === true;
+            const pedRoad = ped[road] || { requested: false, crossing: false, duration: 0 };
+            
+            // Select sensor scenario
             const sensorScenario = selectSensorMode(distanceCm);
 
             let score, greenTime;
 
             if (sensorScenario === 'IR') {
-                // ── SCENARIO B: IR MODE ──────────────────────────────────
-                // Distance < 20cm — vehicle (or pedestrian) very close.
-                // Use IR sensors to determine actual vehicle queue.
-                // Pedestrian zone (10–20cm) is excluded from IR sensors physically,
-                // so ir1Blocked/ir2Blocked only reflect actual vehicles.
-                score     = calculateScoreIR(
-                                irRoad.ir1Blocked,
-                                irRoad.ir2Blocked,
-                                piezoHeavy,
-                                systemMode === 'BOTH' ? google : 'Unknown'
-                            );
+                score = calculateScoreIR(
+                    irRoad.ir1Blocked,
+                    irRoad.ir2Blocked,
+                    piezoHeavy,
+                    systemMode === 'BOTH' ? google : 'Unknown'
+                );
                 greenTime = calculateGreenTimeIR(
-                                irRoad.ir1Blocked,
-                                irRoad.ir2Blocked,
-                                piezoHeavy
-                            );
-
+                    irRoad.ir1Blocked,
+                    irRoad.ir2Blocked,
+                    piezoHeavy
+                );
             } else {
-                // ── SCENARIO A: ULTRASONIC MODE ──────────────────────────
-                // Distance >= 20cm — vehicle is beyond IR range and pedestrian zone.
-                // Use distance + Google Traffic for scoring and green time.
-                score     = calculateScoreUltrasonic(distanceCm, google);
+                score = calculateScoreUltrasonic(distanceCm, google);
                 greenTime = calculateGreenTimeUltrasonic(distanceCm, google);
             }
 
-            // ── PEDESTRIAN OVERRIDE ───────────────────────────────────────
-            // Applies in BOTH scenarios — pedestrian logic is scenario-independent.
+            // ── PEDESTRIAN OVERRIDE (Matches ESP32 logic) ───────────────────
+            // If road is actively being crossed → must be RED, cannot win
             if (pedRoad.crossing) {
-                // Road is actively being crossed — hold RED, do not give GREEN
-                score    -= 1000;
+                score = -1000;
                 greenTime = 0;
-            } else if (pedRoad.requested) {
-                // Button pressed, waiting — boost priority so this road
-                // wins the next cycle quickly, triggering the crossing phase
-                score += 100;
+            }
+            // If pedestrian requested, boost priority so this road wins quickly
+            // This triggers the crossing phase after YELLOW
+            else if (pedRoad.requested) {
+                score += 200;  // High priority boost
             }
 
+            // ── PIEZO EXTENSION (Matches ESP32 logic) ───────────────────────
+            // piezoHeavy means extendNextGreen = true for next GREEN
+            // The greenTime already includes the bonus via calculateGreenTimeIR
+            // But we need to track it for dashboard display
+            
             return {
                 road,
-                sensorScenario,           // 'IR' or 'ULTRASONIC' — shown on dashboard
-                distance:     distanceCm,
-                ir1Blocked:   irRoad.ir1Blocked  || false,
-                ir2Blocked:   irRoad.ir2Blocked  || false,
-                piezoHeavy,
-                traffic:      google,
+                sensorScenario,
+                distance: distanceCm,
+                ir1Blocked: irRoad.ir1Blocked || false,
+                ir2Blocked: irRoad.ir2Blocked || false,
+                piezoHeavy: piezoHeavy,
+                traffic: google,
                 score,
                 greenTime,
-                yellowTime:   currentYellowTime,
-                mode:         systemMode,
-                pedestrian:   {
+                yellowTime: currentYellowTime,
+                mode: systemMode,
+                pedestrian: {
                     requested: pedRoad.requested,
-                    crossing:  pedRoad.crossing,
-                    duration:  pedRoad.duration || 0
-                }
+                    crossing: pedRoad.crossing,
+                    duration: pedRoad.duration || 0
+                },
+                piezoExtension: piezoHeavy  // Will apply to next GREEN
             };
         });
     }
@@ -382,26 +351,56 @@ function makeSignalDecision(
     const winner = priorities[0];
 
     // ── Build per-road commands ───────────────────────────────────────────────
+    // IMPORTANT: For roads that are crossing, force RED
+    // For the winner, send GREEN if not crossing
     const commands = {};
     ROADS.forEach(road => {
-        commands[road] = road === winner.road
-            ? { signal: 'GREEN', greenTime: winner.greenTime, yellowTime: currentYellowTime }
-            : { signal: 'RED',   greenTime: 0,                yellowTime: 0 };
+        const roadPed = ped[road] || {};
+        
+        // If road is actively being crossed, force RED
+        if (roadPed.crossing) {
+            commands[road] = { 
+                signal: 'RED', 
+                greenTime: 0, 
+                yellowTime: currentYellowTime,
+                reason: 'pedestrian_crossing'
+            };
+        } 
+        // Winner gets GREEN (if not crossing, which we already checked)
+        else if (road === winner.road) {
+            commands[road] = { 
+                signal: 'GREEN', 
+                greenTime: winner.greenTime, 
+                yellowTime: currentYellowTime,
+                reason: 'winner'
+            };
+        } 
+        // Others get RED
+        else {
+            commands[road] = { 
+                signal: 'RED', 
+                greenTime: 0, 
+                yellowTime: 0,
+                reason: 'loser'
+            };
+        }
     });
 
     return {
-        timestamp:      new Date().toISOString(),
-        mode:           systemMode,
-        winner:         winner.road,
-        winnerScenario: winner.sensorScenario,  // tells dashboard which mode won
-        greenDuration:  winner.greenTime,
+        timestamp: new Date().toISOString(),
+        mode: systemMode,
+        winner: winner.road,
+        winnerScenario: winner.sensorScenario,
+        greenDuration: winner.greenTime,
         yellowDuration: currentYellowTime,
-        redDuration:    BASE_RED_TIME,
-        redForOthers:   winner.greenTime + currentYellowTime,
+        redDuration: BASE_RED_TIME,
+        redForOthers: winner.greenTime + currentYellowTime,
         priorities,
         commands,
-        dataStatus:     { sensorWorking, googleWorking },
-        weather:        { rainDetected: rainDetected || false, yellowTime: currentYellowTime }
+        dataStatus: { sensorWorking, googleWorking },
+        weather: { rainDetected: rainDetected || false, yellowTime: currentYellowTime },
+        pedestrianStatus: ped,
+        piezoStatus: piezoData
     };
 }
 
@@ -415,7 +414,12 @@ module.exports = {
     calculateGreenTimeIR,
     calculateScoreUltrasonic,
     calculateScoreIR,
-    // Constants (used by server/index.js and tests)
+    // Helper functions for external use
+    isRoadCrossing,
+    hasPedestrianRequest,
+    getPedestrianRemainingTime,
+    hasPiezoExtension,
+    // Constants
     IR_MODE_THRESHOLD,
     BASE_RED_TIME,
     BASE_GREEN_TIME,
@@ -425,5 +429,6 @@ module.exports = {
     YELLOW_TIME_DRY,
     YELLOW_TIME_RAIN,
     MIN_GREEN_ULTRASONIC,
-    MAX_GREEN_ULTRASONIC
+    MAX_GREEN_ULTRASONIC,
+    PED_CROSS_TIME
 };

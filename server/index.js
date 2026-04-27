@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // server/index.js — HYDRA Smart Traffic Control System
-// MODIFIED: Dynamic RED time for non-priority roads = winner's GREEN + YELLOW
+// UPDATED: Matches ESP32 pedestrian and piezo logic from working reference
 // ═══════════════════════════════════════════════════════════════════════════
 
 require('dotenv').config();
@@ -16,7 +16,7 @@ const { Server }     = require('socket.io');
 const TrafficData    = require('./models/TrafficData');
 const UltrasonicData = require('./models/UltrasonicData');
 const { getAllTrafficConditions } = require('./services/googleTrafficService');
-const { makeSignalDecision } = require('./logic/signalDecision');
+const { makeSignalDecision, PED_CROSS_TIME } = require('./logic/signalDecision');
 
 const app        = express();
 const httpServer = http.createServer(app);
@@ -65,10 +65,14 @@ let irData = {
 
 let piezoData = { North: false, South: false, East: false, West: false };
 
-// Rain Sensor Data - 3s normal, 5s when raining
+// Rain Sensor Data - affects YELLOW duration (3s dry, 5s wet)
 let rainDetected = false;
 let yellowTime = 3;
 
+// Pedestrian Status - matches ESP32 states
+// - requested: button pressed, waiting for crossing
+// - crossing: actively crossing (PED_GREEN on)
+// - duration: remaining crossing time
 let pedStatus = {
     North: { requested: false, crossing: false, duration: 0 },
     South: { requested: false, crossing: false, duration: 0 },
@@ -77,10 +81,6 @@ let pedStatus = {
 };
 
 let greenTime = { North: 3, South: 3, East: 3, West: 3 };
-
-// ── MODIFIED: redTime is now DYNAMIC per cycle, not fixed ────────────────────
-// redTime = winner's greenDuration + yellowDuration for that cycle
-// This variable tracks the CURRENT cycle's computed red time for non-priority roads
 let redTime = 3; // Will be updated each cycle dynamically
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -155,7 +155,7 @@ aedes.on('publish', async (packet, client) => {
                 greenTime[road] = 3;
             }
             
-            console.log(`🔦 IR [${road}]: ${data.ir1Blocked ? 'BLOCKED' : 'CLEAR'} | ${data.ir2Blocked ? 'BLOCKED' : 'CLEAR'} → ${trafficDensity} Traffic (Green: ${greenTime[road]}s)`);
+            console.log(`🔦 IR [${road}]: ${data.ir1Blocked ? 'BLOCKED' : 'CLEAR'} | ${data.ir2Blocked ? 'BLOCKED' : 'CLEAR'} → ${trafficDensity} Traffic`);
             io.emit('irUpdate', { road, ir1Blocked: data.ir1Blocked, ir2Blocked: data.ir2Blocked, queueLevel: trafficDensity });
             
         } catch (e) { 
@@ -163,16 +163,17 @@ aedes.on('publish', async (packet, client) => {
         }
     }
 
-    // ── Piezo Sensor Data ────────────────────────────────────────────────────
+    // ── Piezo Sensor Data (matches ESP32: extendNextGreen) ────────────────────
     if (topic.startsWith('traffic/piezo/')) {
         try {
             const data = JSON.parse(payload);
             const road = topic.split('/')[2];
             if (!ROADS.includes(road)) return;
             
+            // Store piezo state - will affect next GREEN cycle
             piezoData[road] = data.heavyVehicle || false;
             if (data.heavyVehicle) {
-                console.log(`🚛 Heavy vehicle detected on ${road}! Priority increased`);
+                console.log(`🚛 Heavy vehicle detected on ${road}! Next GREEN extended by 5 seconds`);
             }
             io.emit('piezoUpdate', { road, heavyVehicle: data.heavyVehicle });
             
@@ -188,7 +189,7 @@ aedes.on('publish', async (packet, client) => {
             rainDetected = data.rainDetected || false;
             yellowTime = rainDetected ? 5 : 3;
             
-            console.log(`🌧️ Rain Sensor: ${rainDetected ? 'RAINING (Yellow: 5s = 3s + 2s)' : 'DRY (Yellow: 3s)'}`);
+            console.log(`🌧️ Rain Sensor: ${rainDetected ? 'RAINING (Yellow: 5s)' : 'DRY (Yellow: 3s)'}`);
             io.emit('rainUpdate', { rainDetected, yellowTime });
             
         } catch (e) { 
@@ -196,22 +197,30 @@ aedes.on('publish', async (packet, client) => {
         }
     }
 
-    // ── Pedestrian Button Data ───────────────────────────────────────────────
+    // ── Pedestrian Data (matches ESP32 states) ───────────────────────────────
     if (topic.startsWith('traffic/pedestrian/')) {
         try {
             const data = JSON.parse(payload);
             const road = topic.split('/')[2];
             if (!ROADS.includes(road)) return;
             
+            // Update pedestrian state based on ESP32 messages
             if (data.requested !== undefined) {
                 pedStatus[road].requested = data.requested;
+                if (data.requested) {
+                    console.log(`🚶 Pedestrian [${road}]: BUTTON PRESSED - WAITING`);
+                }
             }
             if (data.crossing !== undefined) {
                 pedStatus[road].crossing = data.crossing;
-                pedStatus[road].duration = data.duration || 10;
+                pedStatus[road].duration = data.duration || PED_CROSS_TIME;
+                if (data.crossing) {
+                    console.log(`🚶 Pedestrian [${road}]: CROSSING (${pedStatus[road].duration}s)`);
+                } else if (!data.crossing && pedStatus[road].requested === false) {
+                    console.log(`✅ Pedestrian [${road}]: Crossing FINISHED`);
+                }
             }
             
-            console.log(`🚶 Pedestrian [${road}]: ${pedStatus[road].requested ? 'WAITING' : 'IDLE'} | ${pedStatus[road].crossing ? 'CROSSING' : ''}`);
             io.emit('pedestrianUpdate', { road, ...pedStatus[road] });
             
         } catch (e) { 
@@ -240,21 +249,18 @@ aedes.on('publish', async (packet, client) => {
 
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 4: SIGNAL CYCLE ENGINE
-// MODIFIED: Non-priority roads receive redTime = greenDuration + yellowDuration
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── Send command to a road via MQTT ─────────────────────────────────────────
-// MODIFIED: now accepts redTime parameter so ESP32 knows how long to stay RED
+// Send command to a road via MQTT
 function sendCommandToRoad(road, signal, greenDuration, yellowOverride, dynamicRedTime) {
-    const yt  = (yellowOverride !== undefined && yellowOverride > 0) ? yellowOverride : yellowTime;
-    // MODIFIED: pass the dynamic red time so ESP32 can use it for its own red phase
-    const rt  = (dynamicRedTime !== undefined && dynamicRedTime > 0) ? dynamicRedTime : 0;
+    const yt = (yellowOverride !== undefined && yellowOverride > 0) ? yellowOverride : yellowTime;
+    const rt = (dynamicRedTime !== undefined && dynamicRedTime > 0) ? dynamicRedTime : 0;
 
     const msg = JSON.stringify({
         signal,
         greenTime:  greenDuration || 5,
         yellowTime: yt,
-        redTime:    rt,    // <-- NEW: ESP32 uses this for its RED phase duration
+        redTime:    rt,
         timestamp:  new Date().toISOString()
     });
     
@@ -269,8 +275,7 @@ function sendCommandToRoad(road, signal, greenDuration, yellowOverride, dynamicR
     });
 }
 
-// ── Set all roads to RED with dynamic red time ───────────────────────────────
-// MODIFIED: accepts a dynamicRedTime so non-priority roads know their RED duration
+// Set all roads to RED with dynamic red time
 function setAllRoadsRed(dynamicRedTime) {
     const rt = dynamicRedTime || 0;
     ROADS.forEach(road => {
@@ -295,9 +300,7 @@ function decideNextWinner() {
     if (latestDecision && latestDecision.winner) {
         latestDecision.greenDuration  = latestDecision.greenDuration  || 5;
         latestDecision.yellowDuration = latestDecision.yellowDuration || yellowTime;
-
-        // ── MODIFIED: dynamic red time = winner's green + yellow ──────────────
-        // This is the time the 3 non-priority roads will stay RED
+        // redForOthers = winner's green + yellow (dynamic RED for non-priority roads)
         latestDecision.redForOthers = latestDecision.greenDuration + latestDecision.yellowDuration;
     }
     
@@ -308,8 +311,7 @@ function decideNextWinner() {
     return latestDecision;
 }
 
-// ── Main cycle engine ────────────────────────────────────────────────────────
-// MODIFIED: non-priority roads receive RED command with dynamicRedTime
+// Main cycle engine
 function runOneCycle() {
     if (forceOverride && forceOverride.active) return;
 
@@ -318,62 +320,76 @@ function runOneCycle() {
     const greenDuration  = decision.greenDuration  || greenTime[winner] || 5;
     const yellowDuration = decision.yellowDuration || yellowTime;
 
-    // ── MODIFIED: dynamic red = green + yellow of winner ─────────────────────
+    // Dynamic RED time = winner's GREEN + YELLOW
     const dynamicRedTime = greenDuration + yellowDuration;
-
-    // Update global redTime so dashboard and broadcasts reflect the real value
     redTime = dynamicRedTime;
 
     currentWinner = winner;
     currentPhase  = 'GREEN';
 
-    // Step 1: Send RED to all non-priority roads with the dynamic red duration
-    // Winner also gets RED momentarily — will be overridden to GREEN in 500ms
+    console.log(`\n🟢 [CYCLE START] ${winner} wins!`);
+    console.log(`   GREEN: ${greenDuration}s | YELLOW: ${yellowDuration}s | Others RED: ${dynamicRedTime}s`);
+
+    // Step 1: Send RED to all roads (including winner initially)
     ROADS.forEach(road => {
-        if (road !== winner) {
-            sendCommandToRoad(road, 'RED', 0, 0, dynamicRedTime);
-            livePhase[road]     = 'RED';
-            liveSignalState[road] = 'RED';
-            // Start countdown on non-priority roads showing how long they stay RED
-            startCountdown(road, 'RED', dynamicRedTime);
-        }
+        sendCommandToRoad(road, 'RED', 0, 0, dynamicRedTime);
+        livePhase[road] = 'RED';
+        liveSignalState[road] = 'RED';
+        startCountdown(road, 'RED', dynamicRedTime);
     });
 
     // Step 2: After 500ms, give GREEN to winner
     setTimeout(() => {
+        // Check if pedestrian is crossing on winner road - if yes, don't give GREEN
+        if (pedStatus[winner] && pedStatus[winner].crossing) {
+            console.log(`🚶 ${winner} is in pedestrian crossing state - delaying GREEN`);
+            // Reschedule after crossing completes
+            setTimeout(() => {
+                if (!forceOverride || !forceOverride.active) {
+                    sendCommandToRoad(winner, 'GREEN', greenDuration, yellowDuration, 0);
+                    livePhase[winner] = 'GREEN';
+                    liveSignalState[winner] = 'GREEN';
+                    startCountdown(winner, 'GREEN', greenDuration);
+                    broadcastFullState();
+                }
+            }, 2000);
+            return;
+        }
+
         sendCommandToRoad(winner, 'GREEN', greenDuration, yellowDuration, 0);
-        livePhase[winner]      = 'GREEN';
+        livePhase[winner] = 'GREEN';
         liveSignalState[winner] = 'GREEN';
         startCountdown(winner, 'GREEN', greenDuration);
-
-        console.log(`\n🟢 [CYCLE] ${winner} GREEN for ${greenDuration}s | ` +
-                    `Others RED for ${dynamicRedTime}s`);
         broadcastFullState();
 
         // Step 3: After green ends, switch winner to YELLOW
         phaseTimer = setTimeout(() => {
             currentPhase = 'YELLOW';
-            const nextDecision = decideNextWinner();
-
-            console.log(`🟡 [CYCLE] ${winner} YELLOW for ${yellowDuration}s — NEXT: ${nextDecision.winner}`);
 
             sendCommandToRoad(winner, 'YELLOW', 0, yellowDuration, 0);
-            livePhase[winner]      = 'YELLOW';
+            livePhase[winner] = 'YELLOW';
             liveSignalState[winner] = 'YELLOW';
             startCountdown(winner, 'YELLOW', yellowDuration);
             broadcastFullState();
 
-            // Step 4: After yellow ends, winner goes RED, start inter-cycle pause
+            console.log(`🟡 [CYCLE] ${winner} YELLOW for ${yellowDuration}s`);
+
+            // Step 4: After yellow ends, check if pedestrian is waiting
             phaseTimer = setTimeout(() => {
+                // Check if pedestrian requested crossing on winner road
+                if (pedStatus[winner] && pedStatus[winner].requested) {
+                    console.log(`🚶 ${winner} has pedestrian waiting - will cross after YELLOW`);
+                    // ESP32 will handle the crossing automatically
+                }
+
                 currentPhase = 'RED';
-
                 sendCommandToRoad(winner, 'RED', 0, 0, 0);
-                livePhase[winner]      = 'RED';
+                livePhase[winner] = 'RED';
                 liveSignalState[winner] = 'RED';
-                liveCountdown[winner]  = 0;
-
+                liveCountdown[winner] = 0;
                 broadcastFullState();
-                console.log(`🔴 [CYCLE] ${winner} RED — 2s inter-cycle pause before next winner`);
+
+                console.log(`🔴 [CYCLE] ${winner} RED - 2s inter-cycle pause`);
 
                 // Step 5: Inter-cycle 2s pause, then start next cycle
                 phaseTimer = setTimeout(() => {
@@ -387,7 +403,7 @@ function runOneCycle() {
     }, 500);
 }
 
-// ── Countdown helper ─────────────────────────────────────────────────────────
+// Countdown helper
 let countdownIntervals = {};
 
 function startCountdown(road, phase, seconds) {
@@ -404,7 +420,7 @@ function startCountdown(road, phase, seconds) {
     }, 1000);
 }
 
-// ── Broadcast full state to all dashboard clients ────────────────────────────
+// Broadcast full state to all dashboard clients
 function broadcastFullState() {
     io.emit('fullState', {
         liveSignalState,
@@ -421,7 +437,6 @@ function broadcastFullState() {
         yellowTime,
         pedStatus,
         greenTime,
-        // MODIFIED: redTime is now dynamic (= winner's green + yellow)
         redTime,
         forceOverride: forceOverride 
             ? { active: forceOverride.active, road: forceOverride.road, command: forceOverride.command }
@@ -431,7 +446,6 @@ function broadcastFullState() {
 
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 5: FORCE OVERRIDE HANDLER
-// MODIFIED: uses dynamicRedTime for non-priority roads during override too
 // ════════════════════════════════════════════════════════════════════════════
 function applyForceOverride(road, command, duration) {
     console.log(`🚨 FORCE OVERRIDE: ${road} → ${command} for ${duration}s`);
@@ -439,13 +453,12 @@ function applyForceOverride(road, command, duration) {
     if (phaseTimer) clearTimeout(phaseTimer);
     Object.values(countdownIntervals).forEach(i => clearInterval(i));
 
-    // For force override, non-priority roads stay RED for duration + yellowTime
     const overrideRedTime = command === 'GREEN' ? (duration + yellowTime) : duration;
 
     ROADS.forEach(r => {
         if (r !== road) {
             sendCommandToRoad(r, 'RED', 0, 0, overrideRedTime);
-            livePhase[r]      = 'RED';
+            livePhase[r] = 'RED';
             liveSignalState[r] = 'RED';
             startCountdown(r, 'RED', overrideRedTime);
         }
@@ -455,7 +468,7 @@ function applyForceOverride(road, command, duration) {
 
     setTimeout(() => {
         sendCommandToRoad(road, command, duration, yellowTime, 0);
-        livePhase[road]      = command;
+        livePhase[road] = command;
         liveSignalState[road] = command;
         startCountdown(road, command, duration);
         broadcastFullState();
@@ -466,9 +479,9 @@ function applyForceOverride(road, command, duration) {
 
             ROADS.forEach(r => {
                 sendCommandToRoad(r, 'RED', 0, 0, 0);
-                livePhase[r]      = 'RED';
+                livePhase[r] = 'RED';
                 liveSignalState[r] = 'RED';
-                liveCountdown[r]  = 0;
+                liveCountdown[r] = 0;
             });
 
             broadcastFullState();
@@ -515,7 +528,6 @@ app.get('/api/traffic', async (req, res) => {
             yellowTime,
             pedStatus,
             greenTime,
-            // MODIFIED: redTime is now dynamic
             redTime,
             note: 'redTime is dynamic: equals winner greenTime + yellowTime each cycle'
         });
@@ -565,9 +577,9 @@ app.post('/api/system/resume', (req, res) => {
     if (phaseTimer) clearTimeout(phaseTimer);
     ROADS.forEach(r => {
         sendCommandToRoad(r, 'RED', 0, 0, 0);
-        livePhase[r]      = 'RED';
+        livePhase[r] = 'RED';
         liveSignalState[r] = 'RED';
-        liveCountdown[r]  = 0;
+        liveCountdown[r] = 0;
     });
     setTimeout(() => runOneCycle(), 2000);
     res.json({ message: 'Normal cycle resumed' });
@@ -583,9 +595,10 @@ app.get('/api/health', (req, res) => {
         uptime: process.uptime(),
         rainDetected,
         yellowTime,
-        // MODIFIED: show current dynamic red time
         currentRedTime: redTime,
         redTimeNote: 'Dynamic: winner greenTime + yellowTime',
+        pedestrianStatus: pedStatus,
+        piezoStatus: piezoData,
         irData
     });
 });
@@ -627,8 +640,10 @@ setTimeout(async () => {
     console.log('\n🚦 Starting HYDRA Signal Cycle Engine...');
     console.log(`📋 Configuration:`);
     console.log(`   - RED Time: DYNAMIC (= winner's GREEN + YELLOW each cycle)`);
-    console.log(`   - YELLOW Time: ${yellowTime}s (3s normal, 5s when raining)`);
+    console.log(`   - YELLOW Time: ${yellowTime}s (3s dry, 5s rain)`);
     console.log(`   - GREEN Time: 3s base + traffic bonus (Light: +3s → 6s, Heavy: +6s → 9s)`);
+    console.log(`   - PIEZO: Heavy vehicle detection → next GREEN +5s`);
+    console.log(`   - PEDESTRIAN: Button press → priority boost, crossing → RED forced`);
     console.log(`   - Example: winner GREEN=9s + YELLOW=5s → others RED=14s`);
     await refreshGoogleTraffic();
     setInterval(refreshGoogleTraffic, 30000);
