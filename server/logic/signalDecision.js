@@ -311,7 +311,7 @@ function makeSignalDecision(
             const google    = (trafficData || {})[road] || 'Unknown';
             const irRoad    = ir[road]    || { ir1Blocked: false, ir2Blocked: false };
             const piezoHeavy = piezo[road] || false;
-            const pedRoad   = ped[road]    || { requested: false, crossing: false };
+            const pedRoad   = ped[road]    || { requested: false, crossing: false, duration: 0 };
 
             // ── SELECT SENSOR SCENARIO FOR THIS ROAD ──────────────────────
             const sensorScenario = selectSensorMode(distanceCm);
@@ -368,7 +368,11 @@ function makeSignalDecision(
                 greenTime,
                 yellowTime:   currentYellowTime,
                 mode:         systemMode,
-                pedestrian:   pedRoad
+                pedestrian:   {
+                    requested: pedRoad.requested,
+                    crossing:  pedRoad.crossing,
+                    duration:  pedRoad.duration || 0
+                }
             };
         });
     }
@@ -393,7 +397,7 @@ function makeSignalDecision(
         greenDuration:  winner.greenTime,
         yellowDuration: currentYellowTime,
         redDuration:    BASE_RED_TIME,
-        redForOthers:   winner.greenTime + currentYellowTime + BASE_RED_TIME,
+        redForOthers:   winner.greenTime + currentYellowTime,
         priorities,
         commands,
         dataStatus:     { sensorWorking, googleWorking },

@@ -829,6 +829,7 @@ function App() {
     const [redTime,       setRedTime]       = useState(0);
     const [greenTime,     setGreenTime]     = useState({ North:3, South:3, East:3, West:3 });
     const [pedStatus,     setPedStatus]     = useState({});
+    const [piezoData,     setPiezoData]     = useState({ North:false, South:false, East:false, West:false });
     const [decision,      setDecision]      = useState(null);
     const [connected,     setConnected]     = useState(false);
     const [chartHistory,  setChartHistory]  = useState([]);
@@ -861,6 +862,7 @@ function App() {
                 setRainDetected(data.rainDetected);
                 setYellowTime(data.rainDetected ? 5 : 3);
             }
+            if (data.piezoData)       setPiezoData(data.piezoData);
             // Backend sends dynamic redTime = winner green + yellow
             if (data.redTime !== undefined) setRedTime(data.redTime);
             if (data.greenTime)       setGreenTime(data.greenTime);
@@ -892,6 +894,7 @@ function App() {
             setRainDetected(r);
             setYellowTime(r ? 5 : 3);
         });
+        socket.on('piezoUpdate',       ({ road, heavyVehicle }) => setPiezoData(p => ({ ...p, [road]: heavyVehicle })));
         socket.on('pedestrianUpdate',  ({ road, ...rest }) => setPedStatus(p => ({ ...p, [road]: rest })));
         socket.on('googleTrafficUpdate', ({ googleTraffic: gt, googleWorking: gw }) => {
             setGoogleTraffic(gt);
@@ -923,6 +926,7 @@ function App() {
     const winner    = decision?.winner;
     // Use redForOthers from decision (dynamic: winner green + yellow)
     const redForOthers = decision?.redForOthers || redTime || 0;
+    const heavyPiezoCount = Object.values(piezoData).filter(Boolean).length;
 
     // Per-road sensor scenario from decision priorities
     const scenarioMap = {};
@@ -1042,6 +1046,7 @@ function App() {
                     const google    = googleTraffic[road] || 'Unknown';
                     const isWin     = winner === road;
                     const ir        = irData[road] || { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' };
+                    const piezo     = piezoData[road] || false;
                     const ped       = pedStatus[road] || { requested: false, crossing: false, duration: 0 };
                     const scenario  = scenarioMap[road] || null;
 
@@ -1158,6 +1163,17 @@ function App() {
                                         </div>
                                     </div>
 
+                                    {/* Piezo / Heavy Vehicle */}
+                                    <div style={{ background: '#0f172a', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                            <span>🚛</span>
+                                            <span style={{ fontSize: 11, color: '#64748b' }}>Piezo Sensor</span>
+                                            <span style={{ fontSize: 11, color: piezo ? '#f87171' : '#4ade80', fontWeight: 'bold' }}>
+                                                {piezo ? 'Heavy vehicle detected — next GREEN +5s' : 'No heavy vehicle'}
+                                            </span>
+                                        </div>
+                                    </div>
+
                                     {/* Next intersection */}
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                                         <span style={{ fontSize: 13 }}>🗺️</span>
@@ -1219,6 +1235,7 @@ function App() {
                         { label: 'Yellow Time',     value: `${yellowTime}s ${rainDetected ? '(3s+2s rain)' : '(normal)'}`,  ok: true },
                         { label: 'RED for Others',  value: redForOthers > 0 ? `${redForOthers}s (dynamic)` : '—', ok: redForOthers > 0,
                           note: 'Equals winner Green + Yellow' },
+                        { label: 'Heavy Vehicles',  value: heavyPiezoCount > 0 ? `${heavyPiezoCount} road(s)` : 'None', ok: true },
                         { label: 'Sensor Accuracy', value: `${activeSensors}/4 active`,     ok: activeSensors > 0 },
                         { label: 'Google Traffic',  value: googleWorking ? 'Active' : 'Disabled', ok: googleWorking },
                         { label: 'Rain Sensor',     value: rainDetected ? 'Rain' : 'Clear', ok: true },

@@ -336,7 +336,7 @@ bool          pedCrossing      = false;
 bool          afterPedestrianCrossing = false;
 bool          yellowCountdownDisplayed = false;
 unsigned long pedStartMs       = 0;
-const int     PED_CROSS_TIME   = 10; // seconds for pedestrian to cross
+const int     PED_CROSS_TIME   = 3; // seconds for pedestrian to cross
 
 // ── SENSOR PUBLISH INTERVALS ─────────────────────────────────────────────────
 unsigned long lastUltraPublish = 0;
@@ -349,6 +349,7 @@ bool ir1Blocked = false;
 bool ir2Blocked = false;
 bool rainDetected = false;
 bool heavyVehicleDetected = false;
+bool extendNextGreen = false;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LIGHT CONTROL
@@ -467,6 +468,7 @@ void startCountdown(int seconds) {
         unsigned long end = millis() + 1000UL;
         while (millis() < end) {
             delay(1);
+            mqttClient.loop();
         }
     }
     clearDisplay();
@@ -481,17 +483,19 @@ void updateTimings() {
     
     // 2. GREEN time based on traffic density (IR sensors)
     if (ir1Blocked && ir2Blocked) {
-        // BOTH sensors blocked = HEAVY TRAFFIC
         currentGreenTime = BASE_GREEN_TIME + HEAVY_TRAFFIC_BONUS;  // 3s + 6s = 9s
         Serial.println("🔴 HEAVY TRAFFIC — Green: 9s (+6s bonus)");
     } else if (ir1Blocked || ir2Blocked) {
-        // ONE sensor blocked = LIGHT TRAFFIC
         currentGreenTime = BASE_GREEN_TIME + LIGHT_TRAFFIC_BONUS;  // 3s + 3s = 6s
         Serial.println("🟡 LIGHT TRAFFIC — Green: 6s (+3s bonus)");
     } else {
-        // NO sensors blocked = NO TRAFFIC
         currentGreenTime = BASE_GREEN_TIME;  // 3s
         Serial.println("🟢 NO TRAFFIC — Green: 3s (base)");
+    }
+    
+    if (extendNextGreen) {
+        currentGreenTime += 5000;
+        Serial.println("🚛 Piezo extension applied — Next GREEN +5s");
     }
     
     // 3. YELLOW time based on rain
@@ -526,14 +530,16 @@ void updateLightPhase() {
     }
 
     if (millis() < phaseEndMs) return;
-    
+
     if (currentPhase == PHASE_RED) {
         currentPhase = PHASE_GREEN;
         phaseEndMs = millis() + currentGreenTime;
         setTrafficLight(PHASE_GREEN);
         publishState("GREEN");
         Serial.println("🟢 GREEN for " + String(currentGreenTime / 1000) + "s");
-        
+        extendNextGreen = false;
+        yellowCountdownDisplayed = false;
+
     } else if (currentPhase == PHASE_GREEN) {
         currentPhase = PHASE_YELLOW;
         phaseEndMs = millis() + currentYellowTime;
@@ -545,7 +551,7 @@ void updateLightPhase() {
         if (pedRequested && !pedCrossing) {
             Serial.println("🚶 Pedestrian waiting — will cross after yellow");
         }
-        
+
     } else if (currentPhase == PHASE_YELLOW) {
         if (pedRequested && !pedCrossing) {
             startPedestrianCrossing();
@@ -556,11 +562,9 @@ void updateLightPhase() {
             setTrafficLight(PHASE_GREEN);
             publishState("GREEN");
             Serial.println("🟢 GREEN for " + String(currentGreenTime / 1000) + "s");
-            setTrafficLight(PHASE_RED);
-            publishState("RED");
-            Serial.println("🔴 RED for " + String(currentRedTime / 1000) + "s");
+            extendNextGreen = false;
+            yellowCountdownDisplayed = false;
         }
-        yellowCountdownDisplayed = false;
     }
 }
 
@@ -575,21 +579,21 @@ void startPedestrianCrossing() {
     yellowCountdownDisplayed = false;
     currentPhase = PHASE_RED;
     phaseEndMs = millis() + (PED_CROSS_TIME * 1000UL);
-    
+
     setTrafficLight(PHASE_RED);
     publishState("RED");
-    
-    digitalWrite(PED_RED_LED,   LOW);
+
+    digitalWrite(PED_RED_LED, LOW);
     digitalWrite(PED_GREEN_LED, HIGH);
-    
+
     StaticJsonDocument<128> doc;
-    doc["road"]     = ROAD_ID;
+    doc["road"] = ROAD_ID;
     doc["crossing"] = true;
     doc["duration"] = PED_CROSS_TIME;
     char buf[128];
     serializeJson(doc, buf);
     mqttClient.publish(PUB_PED.c_str(), buf);
-    
+
     pedStartMs = millis();
 }
 
@@ -598,18 +602,18 @@ void updatePedestrianCrossing() {
     if (millis() - pedStartMs >= (PED_CROSS_TIME * 1000UL)) {
         pedCrossing = false;
         digitalWrite(PED_GREEN_LED, LOW);
-        digitalWrite(PED_RED_LED,   HIGH);
-        
+        digitalWrite(PED_RED_LED, HIGH);
+
         StaticJsonDocument<128> doc;
-        doc["road"]     = ROAD_ID;
+        doc["road"] = ROAD_ID;
         doc["crossing"] = false;
         doc["duration"] = PED_CROSS_TIME;
         char buf[128];
         serializeJson(doc, buf);
         mqttClient.publish(PUB_PED.c_str(), buf);
-        
+
         Serial.println("✅ Pedestrian crossing finished — moving to YELLOW then GREEN");
-        
+
         afterPedestrianCrossing = true;
         currentPhase = PHASE_YELLOW;
         phaseEndMs = millis() + currentYellowTime;
@@ -707,10 +711,10 @@ void publishPiezo() {
     if (heavyVehicle != heavyVehicleDetected) {
         heavyVehicleDetected = heavyVehicle;
         if (heavyVehicleDetected) {
-            Serial.println("🚛 Heavy vehicle detected! Increasing priority");
-            // Optionally update timings for heavy vehicle
-            updateTimings();
+            extendNextGreen = true;
+            Serial.println("🚛 Heavy vehicle detected! Next GREEN extended by 5s");
         }
+        updateTimings();
     }
     
     StaticJsonDocument<128> doc;

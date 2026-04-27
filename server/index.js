@@ -293,9 +293,8 @@ function decideNextWinner() {
     );
     
     if (latestDecision && latestDecision.winner) {
-        const winnerRoad = latestDecision.winner;
-        latestDecision.greenDuration  = greenTime[winnerRoad] || 5;
-        latestDecision.yellowDuration = yellowTime;
+        latestDecision.greenDuration  = latestDecision.greenDuration  || 5;
+        latestDecision.yellowDuration = latestDecision.yellowDuration || yellowTime;
 
         // ── MODIFIED: dynamic red time = winner's green + yellow ──────────────
         // This is the time the 3 non-priority roads will stay RED

@@ -362,7 +362,7 @@ void checkPedestrianButton() {
 void updateLightPhase() {
     if (pedCrossing) return; // pedestrian has full control
 
-    if (millis() < phaseEndMs) return; // current phase not finished yet
+    if (phaseEndMs > 0 && millis() < phaseEndMs) return; // current phase not finished yet
 
     // ── Phase just ended — decide next phase ─────────────────────────────────
     switch (currentPhase) {
@@ -491,13 +491,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         Serial.printf("🟡 YELLOW for %ds\n", yellowSec);
 
     } else if (signal == "RED") {
-        currentRedMs = redSec > 0 ? (unsigned long)redSec * 1000UL : BASE_RED_MS;
         currentPhase = PHASE_RED;
-        phaseEndMs   = millis() + currentRedMs;
         setLight(PHASE_RED);
         publishState("RED");
-        Serial.printf("🔴 RED for %ds\n", redSec > 0 ? redSec : 3);
-    }
+        if (redSec > 0) {
+            currentRedMs = (unsigned long)redSec * 1000UL;
+            phaseEndMs   = millis() + currentRedMs;
+            Serial.printf("🔴 RED for %ds\n", redSec);
+        } else {
+            // Indefinite RED until next server command (for winner after yellow)
+            phaseEndMs = 0; // Disable timeout
+            Serial.println("🔴 RED (indefinite until next command)");
+        }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
