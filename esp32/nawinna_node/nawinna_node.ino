@@ -1,252 +1,6 @@
-// // esp32/nawinna_node/nawinna_node.ino — FULLY FIXED VERSION
-// #include <WiFi.h>
-// #include <PubSubClient.h>
-// #include <ArduinoJson.h>
-
-// // ── CHANGE THESE FOR EACH ESP32 BOARD ──
-// const char* ROAD_ID     = "North";           // Change to "South", "East", or "West"
-// const char* WIFI_SSID   = "SLT-4G_166D59";  // Your WiFi name
-// const char* WIFI_PASS   = "F58EA0CF";        // Your WiFi password
-// const char* MQTT_SERVER = "56.228.30.50";  // Your AWS EC2 Public IP
-// const int   MQTT_PORT   = 1883;
-
-// // ── HC-SR04 ULTRASONIC SENSOR PINS ──
-// const int TRIG_PIN   = 5;    // ESP32 GPIO5  → TRIG on sensor
-// const int ECHO_PIN   = 18;   // ESP32 GPIO18 → ECHO on sensor (via voltage divider)
-
-// // ── TRAFFIC LIGHT LED PINS ──
-// const int RED_LED    = 26;   // ESP32 GPIO26 → Red    LED (through 220Ω resistor)
-// const int YELLOW_LED = 27;   // ESP32 GPIO27 → Yellow LED (through 220Ω resistor)
-// const int GREEN_LED  = 14;   // ESP32 GPIO14 → Green  LED (through 220Ω resistor)
-
-// // ── MQTT TOPICS ──
-// String PUBLISH_TOPIC;    // traffic/ultrasonic/North  — sensor data TO server
-// String SUBSCRIBE_TOPIC;  // traffic/control/North     — commands FROM server
-// String STATE_TOPIC;      // traffic/state/North       — live light state TO server
-
-// // ── MQTT CLIENTS ──
-// WiFiClient   wifiClient;
-// PubSubClient mqttClient(wifiClient);
-
-// // ── LIGHT STATE MACHINE ──
-// // millis() timing instead of delay() — ESP32 never freezes
-// enum LightPhase { PHASE_RED, PHASE_GREEN, PHASE_YELLOW };
-// LightPhase    currentPhase      = PHASE_RED;
-// unsigned long phaseEndMs        = 0;
-// int           pendingGreenTime  = 0;
-// int           pendingYellowTime = 3;
-
-// // ─────────────────────────────────────────────────────────────
-// // setTrafficLight()
-// // Physically turns the correct LED on, all others off
-// // ─────────────────────────────────────────────────────────────
-// void setTrafficLight(LightPhase phase) {
-//     digitalWrite(RED_LED,    LOW);
-//     digitalWrite(YELLOW_LED, LOW);
-//     digitalWrite(GREEN_LED,  LOW);
-//     delay(50);
-//     if      (phase == PHASE_RED)    digitalWrite(RED_LED,    HIGH);
-//     else if (phase == PHASE_YELLOW) digitalWrite(YELLOW_LED, HIGH);
-//     else if (phase == PHASE_GREEN)  digitalWrite(GREEN_LED,  HIGH);
-// }
-
-// // ─────────────────────────────────────────────────────────────
-// // publishLiveState()
-// // Tells the server the current LED colour
-// // Dashboard reads this to show correct colour in real time
-// // ─────────────────────────────────────────────────────────────
-// void publishLiveState(String state) {
-//     String msg = "{\"road\":\"" + String(ROAD_ID) + "\",\"state\":\"" + state + "\"}";
-//     mqttClient.publish(STATE_TOPIC.c_str(), msg.c_str(), true);
-//     Serial.println("📢 State published: " + state);
-// }
-
-// // ─────────────────────────────────────────────────────────────
-// // updateLightStateMachine()
-// // Called every loop() — checks timers and moves phases
-// // GREEN → YELLOW → RED happens automatically, NO blocking
-// // ─────────────────────────────────────────────────────────────
-// void updateLightStateMachine() {
-//     if (currentPhase == PHASE_RED) return;
-
-//     if (millis() >= phaseEndMs) {
-
-//         if (currentPhase == PHASE_GREEN) {
-//             // GREEN finished → switch to YELLOW
-//             currentPhase = PHASE_YELLOW;
-//             phaseEndMs   = millis() + (pendingYellowTime * 1000UL);
-//             setTrafficLight(PHASE_YELLOW);
-//             Serial.println("🟡 YELLOW for " + String(pendingYellowTime) + "s");
-//             publishLiveState("YELLOW");
-
-//         } else if (currentPhase == PHASE_YELLOW) {
-//             // YELLOW finished → switch to RED
-//             currentPhase = PHASE_RED;
-//             setTrafficLight(PHASE_RED);
-//             Serial.println("🔴 Back to RED");
-//             publishLiveState("RED");
-//         }
-//     }
-// }
-
-// // ─────────────────────────────────────────────────────────────
-// // measureDistance()
-// // Returns distance in cm. Returns 5000 if nothing detected.
-// // ─────────────────────────────────────────────────────────────
-// float measureDistance() {
-//     digitalWrite(TRIG_PIN, LOW);
-//     delayMicroseconds(2);
-//     digitalWrite(TRIG_PIN, HIGH);
-//     delayMicroseconds(10);
-//     digitalWrite(TRIG_PIN, LOW);
-
-//     long duration = pulseIn(ECHO_PIN, HIGH, 30000);
-//     if (duration == 0) return 5000;
-//     return (duration * 0.034) / 2.0;
-// }
-
-// // ─────────────────────────────────────────────────────────────
-// // mqttCallback()
-// // Called when server sends a command
-// // Stores timing and starts phase — NO delay()
-// // ─────────────────────────────────────────────────────────────
-// void mqttCallback(char* topic, byte* payload, unsigned int length) {
-//     String msg = "";
-//     for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
-
-//     StaticJsonDocument<256> doc;
-//     if (deserializeJson(doc, msg)) {
-//         Serial.println("❌ JSON parse error");
-//         return;
-//     }
-
-//     String signal     = doc["signal"].as<String>();
-//     int    greenTime  = doc["greenTime"].as<int>();
-//     int    yellowTime = doc["yellowTime"] | 3;
-
-//     Serial.println("📩 Command: " + signal + " greenTime=" + String(greenTime) + "s");
-
-//     if (signal == "GREEN") {
-//         pendingGreenTime  = greenTime;
-//         pendingYellowTime = yellowTime;
-//         currentPhase      = PHASE_GREEN;
-//         phaseEndMs        = millis() + (greenTime * 1000UL);
-//         setTrafficLight(PHASE_GREEN);
-//         Serial.println("🟢 GREEN started (" + String(greenTime) + "s)");
-//         publishLiveState("GREEN");
-
-//     } else {
-//         currentPhase = PHASE_RED;
-//         setTrafficLight(PHASE_RED);
-//         Serial.println("🔴 RED");
-//         publishLiveState("RED");
-//     }
-// }
-
-// // ─────────────────────────────────────────────────────────────
-// // connectToWiFi()
-// // ─────────────────────────────────────────────────────────────
-// void connectToWiFi() {
-//     Serial.print("Connecting to WiFi: ");
-//     Serial.println(WIFI_SSID);
-//     WiFi.begin(WIFI_SSID, WIFI_PASS);
-//     int tries = 0;
-//     while (WiFi.status() != WL_CONNECTED && tries < 30) {
-//         delay(500);
-//         Serial.print(".");
-//         tries++;
-//     }
-//     if (WiFi.status() == WL_CONNECTED) {
-//         Serial.println("\n✅ WiFi Connected! IP: " + WiFi.localIP().toString());
-//     } else {
-//         Serial.println("\n❌ WiFi FAILED — check SSID and password");
-//     }
-// }
-
-// // ─────────────────────────────────────────────────────────────
-// // connectToMQTT()
-// // ─────────────────────────────────────────────────────────────
-// void connectToMQTT() {
-//     String clientId = "HYDRA-" + String(ROAD_ID) + "-ESP32";
-//     Serial.print("Connecting to MQTT...");
-//     if (mqttClient.connect(clientId.c_str())) {
-//         Serial.println(" ✅ Connected!");
-//         mqttClient.subscribe(SUBSCRIBE_TOPIC.c_str());
-//         Serial.println("📡 Subscribed to: " + SUBSCRIBE_TOPIC);
-//     } else {
-//         Serial.println(" ❌ Failed rc=" + String(mqttClient.state()));
-//     }
-// }
-
-// // ─────────────────────────────────────────────────────────────
-// // setup() — runs ONCE on power on
-// // ─────────────────────────────────────────────────────────────
-// void setup() {
-//     Serial.begin(115200);
-//     Serial.println("\n🚦 H.Y.D.R.A Node Starting — Road: " + String(ROAD_ID));
-
-//     pinMode(TRIG_PIN,   OUTPUT);
-//     pinMode(ECHO_PIN,   INPUT);
-//     pinMode(RED_LED,    OUTPUT);
-//     pinMode(YELLOW_LED, OUTPUT);
-//     pinMode(GREEN_LED,  OUTPUT);
-
-//     setTrafficLight(PHASE_RED);  // start safe — RED on
-
-//     PUBLISH_TOPIC   = "traffic/ultrasonic/" + String(ROAD_ID);
-//     SUBSCRIBE_TOPIC = "traffic/control/"    + String(ROAD_ID);
-//     STATE_TOPIC     = "traffic/state/"      + String(ROAD_ID);
-
-//     connectToWiFi();
-//     mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
-//     mqttClient.setCallback(mqttCallback);
-//     connectToMQTT();
-// }
-
-// // ─────────────────────────────────────────────────────────────
-// // loop() — runs FOREVER, never blocks
-// // ─────────────────────────────────────────────────────────────
-// void loop() {
-//     // 1. Keep MQTT alive
-//     if (!mqttClient.connected()) {
-//         connectToMQTT();
-//     }
-//     mqttClient.loop();
-
-//     // 2. Check light phase timers — GREEN→YELLOW→RED automatically
-//     updateLightStateMachine();
-
-//     // 3. Measure sensor and publish every 500ms
-//     static unsigned long lastMeasure = 0;
-//     if (millis() - lastMeasure >= 500) {
-//         lastMeasure = millis();
-
-//         float distance = measureDistance();
-
-//         if (distance >= 5000) {
-//             Serial.println("📡 Sensor: NO object detected");
-//         } else {
-//             Serial.println("📡 Sensor: " + String(distance, 1) + " cm  ← OBJECT DETECTED");
-//         }
-
-//         StaticJsonDocument<128> jsonPayload;
-//         jsonPayload["road"]          = ROAD_ID;
-//         jsonPayload["distanceCm"]    = distance;
-//         jsonPayload["vehicleNearby"] = (distance <= 400);
-//         jsonPayload["timestamp"]     = millis();
-
-//         char buffer[128];
-//         serializeJson(jsonPayload, buffer);
-//         mqttClient.publish(PUBLISH_TOPIC.c_str(), buffer);
-//         Serial.println("📤 Published: " + String(buffer));
-//     }
-// }
-
-
 // ═══════════════════════════════════════════════════════════════════════════
 // esp32/nawinna_node/nawinna_node.ino
-// SOUTH ROAD — Full sensor integration
-// Sensors: Ultrasonic + IR x2 + Piezo + Rain + Pedestrian Button
+// COMPLETE VERSION - Pedestrian + Piezo + IR + Rain + Ultrasonic
 // ═══════════════════════════════════════════════════════════════════════════
 
 #include <WiFi.h>
@@ -271,7 +25,7 @@ const int   MQTT_PORT   = 1883;
 #define GREEN_LED      14
 
 // IR sensors (placed alongside road, behind stop line)
-#define IR_SENSOR_1    34   // First IR  — 0-5cm from stop line  (light traffic)
+#define IR_SENSOR_1    34   // First IR  — 0-5cm from stop line (light traffic)
 #define IR_SENSOR_2    35   // Second IR — 5-10cm from stop line (heavy traffic)
 
 // Piezo vibration sensor (heavy vehicle detection)
@@ -287,7 +41,17 @@ const int   MQTT_PORT   = 1883;
 #define PED_RED_LED    19
 #define PED_GREEN_LED  21
 
-// ── TIMING CONSTANTS (MATCH ESP32 BASE CODE) ────────────────────────────────
+// Seven Segment Display (optional - for countdown)
+// Define your 7-segment pins here if used
+// #define SEG_A_PIN      22
+// #define SEG_B_PIN      23
+// #define SEG_C_PIN      24
+// #define SEG_D_PIN      25
+// #define SEG_E_PIN      26
+// #define SEG_F_PIN      27
+// #define SEG_G_PIN      28
+
+// ── TIMING CONSTANTS ────────────────────────────────────────────────────────
 // Red is always fixed at 3 seconds
 const unsigned long BASE_RED_TIME      = 3000;  // 3 seconds
 
@@ -295,10 +59,14 @@ const unsigned long BASE_RED_TIME      = 3000;  // 3 seconds
 const unsigned long BASE_YELLOW_TIME   = 3000;  // 3 seconds
 const unsigned long RAIN_YELLOW_EXTRA  = 2000;  // +2 seconds when raining
 
-// Green: 3s base, +3s for light traffic, +6s for heavy traffic
-const unsigned long BASE_GREEN_TIME    = 3000;  // 3 seconds
-const unsigned long LIGHT_TRAFFIC_BONUS = 3000; // +3 seconds (1 IR blocked)
-const unsigned long HEAVY_TRAFFIC_BONUS = 6000; // +6 seconds (2 IR blocked)
+// Green: 3s base, +3s for light traffic, +6s for heavy traffic, +5s for heavy vehicle
+const unsigned long BASE_GREEN_TIME     = 3000;  // 3 seconds
+const unsigned long LIGHT_TRAFFIC_BONUS = 3000;  // +3 seconds (1 IR blocked)
+const unsigned long HEAVY_TRAFFIC_BONUS = 6000;  // +6 seconds (2 IR blocked)
+const unsigned long HEAVY_VEHICLE_BONUS = 5000;  // +5 seconds when heavy vehicle detected
+
+// Pedestrian crossing time (fixed 3 seconds as requested)
+const unsigned long PED_CROSSING_TIME  = 3000;   // 3 seconds fixed
 
 // ── MQTT TOPICS ─────────────────────────────────────────────────────────────
 String PUB_SENSOR;    // traffic/ultrasonic/South
@@ -313,19 +81,27 @@ String SUB_CONTROL;   // traffic/control/South
 WiFiClient   wifiClient;
 PubSubClient mqttClient(wifiClient);
 
-// ── LIGHT STATE MACHINE ─────────────────────────────────────────────────────
-enum LightPhase { PHASE_RED, PHASE_GREEN, PHASE_YELLOW };
-LightPhase    currentPhase     = PHASE_RED;
-unsigned long phaseEndMs       = 0;
-unsigned long currentGreenTime = BASE_GREEN_TIME;
-unsigned long currentYellowTime = BASE_YELLOW_TIME;
-unsigned long currentRedTime   = BASE_RED_TIME;
+// ── TRAFFIC LIGHT STATE MACHINE ─────────────────────────────────────────────
+enum TrafficPhase { TRAFFIC_RED, TRAFFIC_GREEN, TRAFFIC_YELLOW, TRAFFIC_PEDESTRIAN };
+TrafficPhase  currentTrafficPhase = TRAFFIC_RED;
+unsigned long phaseEndMs          = 0;
+unsigned long currentGreenTime    = BASE_GREEN_TIME;
+unsigned long currentYellowTime   = BASE_YELLOW_TIME;
+unsigned long currentRedTime      = BASE_RED_TIME;
 
-// ── PEDESTRIAN STATE ─────────────────────────────────────────────────────────
-bool          pedRequested     = false;
-bool          pedCrossing      = false;
-unsigned long pedStartMs       = 0;
-const int     PED_CROSS_TIME   = 10; // seconds for pedestrian to cross
+// ── PEDESTRIAN STATE ────────────────────────────────────────────────────────
+enum PedestrianState { PED_IDLE, PED_WAITING, PED_CROSSING };
+PedestrianState pedState = PED_IDLE;
+unsigned long   pedRequestTime = 0;
+unsigned long   pedestrianEndMs = 0;
+
+// ── SENSOR STATES ───────────────────────────────────────────────────────────
+bool ir1Blocked = false;
+bool ir2Blocked = false;
+bool rainDetected = false;
+bool heavyVehicleDetected = false;
+unsigned long heavyVehicleDetectTime = 0;
+bool heavyVehicleBonusApplied = false;
 
 // ── SENSOR PUBLISH INTERVALS ─────────────────────────────────────────────────
 unsigned long lastUltraPublish = 0;
@@ -333,22 +109,56 @@ unsigned long lastIRPublish    = 0;
 unsigned long lastPiezoPublish = 0;
 unsigned long lastRainPublish  = 0;
 
-// ── SENSOR STATES ───────────────────────────────────────────────────────────
-bool ir1Blocked = false;
-bool ir2Blocked = false;
-bool rainDetected = false;
-bool heavyVehicleDetected = false;
+// ── SEVEN SEGMENT DISPLAY (for countdown) ───────────────────────────────────
+// Uncomment and implement if you have 7-segment display
+/*
+void displayNumber(int number) {
+    // Implement 7-segment display logic here
+    // This is a placeholder
+}
+*/
+
+void showCountdown(int seconds) {
+    Serial.print("⏱️ Countdown: ");
+    Serial.print(seconds);
+    Serial.println("s remaining");
+    // If you have 7-segment, call displayNumber(seconds) here
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LIGHT CONTROL
+// LIGHT CONTROL FUNCTIONS
 // ─────────────────────────────────────────────────────────────────────────────
-void setTrafficLight(LightPhase phase) {
+void setTrafficLight(TrafficPhase phase) {
     digitalWrite(RED_LED,    LOW);
     digitalWrite(YELLOW_LED, LOW);
     digitalWrite(GREEN_LED,  LOW);
-    if (phase == PHASE_RED)    digitalWrite(RED_LED,    HIGH);
-    if (phase == PHASE_YELLOW) digitalWrite(YELLOW_LED, HIGH);
-    if (phase == PHASE_GREEN)  digitalWrite(GREEN_LED,  HIGH);
+    
+    switch(phase) {
+        case TRAFFIC_RED:
+            digitalWrite(RED_LED, HIGH);
+            break;
+        case TRAFFIC_YELLOW:
+            digitalWrite(YELLOW_LED, HIGH);
+            break;
+        case TRAFFIC_GREEN:
+            digitalWrite(GREEN_LED, HIGH);
+            break;
+        case TRAFFIC_PEDESTRIAN:
+            digitalWrite(RED_LED, HIGH);
+            break;
+    }
+}
+
+void setPedestrianLight(bool isGreen) {
+    if (isGreen) {
+        digitalWrite(PED_RED_LED,   LOW);
+        digitalWrite(PED_GREEN_LED, HIGH);
+        Serial.println("🚶 PEDESTRIAN LIGHT: GREEN");
+    } else {
+        digitalWrite(PED_RED_LED,   HIGH);
+        digitalWrite(PED_GREEN_LED, LOW);
+        Serial.println("🚶 PEDESTRIAN LIGHT: RED");
+    }
 }
 
 void publishState(String state) {
@@ -358,137 +168,303 @@ void publishState(String state) {
     char buf[128];
     serializeJson(doc, buf);
     mqttClient.publish(PUB_STATE.c_str(), buf, true);
-    Serial.println("💡 State → " + state);
+    Serial.println("💡 Traffic State → " + state);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// UPDATE TIMINGS BASED ON SENSORS (MATCHES ESP32 BASE CODE)
+// UPDATE TIMINGS BASED ON SENSORS
 // ─────────────────────────────────────────────────────────────────────────────
 void updateTimings() {
     // 1. RED is always fixed (3 seconds)
     currentRedTime = BASE_RED_TIME;
     
     // 2. GREEN time based on traffic density (IR sensors)
+    unsigned long calculatedGreen = BASE_GREEN_TIME;
+    
     if (ir1Blocked && ir2Blocked) {
         // BOTH sensors blocked = HEAVY TRAFFIC
-        currentGreenTime = BASE_GREEN_TIME + HEAVY_TRAFFIC_BONUS;  // 3s + 6s = 9s
-        Serial.println("🔴 HEAVY TRAFFIC — Green: 9s (+6s bonus)");
+        calculatedGreen = BASE_GREEN_TIME + HEAVY_TRAFFIC_BONUS;  // 3s + 6s = 9s
+        Serial.println("🔴 HEAVY TRAFFIC — Base Green: 9s");
     } else if (ir1Blocked || ir2Blocked) {
         // ONE sensor blocked = LIGHT TRAFFIC
-        currentGreenTime = BASE_GREEN_TIME + LIGHT_TRAFFIC_BONUS;  // 3s + 3s = 6s
-        Serial.println("🟡 LIGHT TRAFFIC — Green: 6s (+3s bonus)");
+        calculatedGreen = BASE_GREEN_TIME + LIGHT_TRAFFIC_BONUS;  // 3s + 3s = 6s
+        Serial.println("🟡 LIGHT TRAFFIC — Base Green: 6s");
     } else {
         // NO sensors blocked = NO TRAFFIC
-        currentGreenTime = BASE_GREEN_TIME;  // 3s
-        Serial.println("🟢 NO TRAFFIC — Green: 3s (base)");
+        calculatedGreen = BASE_GREEN_TIME;  // 3s
+        Serial.println("🟢 NO TRAFFIC — Base Green: 3s");
     }
     
-    // 3. YELLOW time based on rain
+    // 3. Add heavy vehicle bonus if detected (and bonus not already applied in this cycle)
+    if (heavyVehicleDetected && !heavyVehicleBonusApplied) {
+        calculatedGreen += HEAVY_VEHICLE_BONUS;  // +5 seconds
+        Serial.println("🚛 HEAVY VEHICLE — Adding +5s to Green Time");
+        heavyVehicleBonusApplied = true;
+    }
+    
+    currentGreenTime = calculatedGreen;
+    Serial.print("📊 FINAL GREEN TIME: ");
+    Serial.print(currentGreenTime / 1000);
+    Serial.println(" seconds");
+    
+    // 4. YELLOW time based on rain
     if (rainDetected) {
         currentYellowTime = BASE_YELLOW_TIME + RAIN_YELLOW_EXTRA;  // 3s + 2s = 5s
-        Serial.println("🌧️ RAIN DETECTED — Yellow: 5s (+2s safety)");
+        Serial.println("🌧️ RAIN DETECTED — Yellow: 5s");
     } else {
         currentYellowTime = BASE_YELLOW_TIME;  // 3s
-        Serial.println("☀️ DRY — Yellow: 3s (normal)");
+        Serial.println("☀️ DRY — Yellow: 3s");
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PHASE STATE MACHINE (non-blocking)
+// PEDESTRIAN REQUEST HANDLING - THE CORE LOGIC
 // ─────────────────────────────────────────────────────────────────────────────
-void updateLightPhase() {
-    if (millis() < phaseEndMs) return;
+void handlePedestrianRequest() {
+    if (pedState != PED_WAITING) return;
     
-    if (currentPhase == PHASE_RED) {
-        // Red finished, start Green
-        currentPhase = PHASE_GREEN;
-        phaseEndMs = millis() + currentGreenTime;
-        setTrafficLight(PHASE_GREEN);
-        publishState("GREEN");
-        Serial.println("🟢 GREEN for " + String(currentGreenTime / 1000) + "s");
-        
-    } else if (currentPhase == PHASE_GREEN) {
-        // Green finished, start Yellow
-        currentPhase = PHASE_YELLOW;
-        phaseEndMs = millis() + currentYellowTime;
-        setTrafficLight(PHASE_YELLOW);
-        publishState("YELLOW");
-        Serial.println("🟡 YELLOW for " + String(currentYellowTime / 1000) + "s");
-        
-        // Check if pedestrian is waiting
-        if (pedRequested && !pedCrossing) {
-            Serial.println("🚶 Pedestrian waiting — will cross after yellow");
-        }
-        
-    } else if (currentPhase == PHASE_YELLOW) {
-        // Yellow finished
-        if (pedRequested && !pedCrossing) {
-            // Serve pedestrian crossing
+    switch(currentTrafficPhase) {
+        case TRAFFIC_RED:
+            // RED light: Immediately give pedestrian crossing
+            Serial.println("🚦 PEDESTRIAN: RED light detected — IMMEDIATE CROSSING");
             startPedestrianCrossing();
-        } else {
-            // Go back to Red
-            currentPhase = PHASE_RED;
-            phaseEndMs = millis() + currentRedTime;
-            setTrafficLight(PHASE_RED);
-            publishState("RED");
-            Serial.println("🔴 RED for " + String(currentRedTime / 1000) + "s");
-        }
+            break;
+            
+        case TRAFFIC_YELLOW:
+            // YELLOW light: Show countdown, then go to RED with pedestrian crossing
+            {
+                unsigned long remaining = (phaseEndMs > millis()) ? (phaseEndMs - millis()) / 1000 : 0;
+                Serial.print("🚦 PEDESTRIAN: YELLOW light detected — ");
+                Serial.print(remaining);
+                Serial.println("s remaining");
+                showCountdown(remaining);
+                // Will start crossing after YELLOW finishes
+            }
+            break;
+            
+        case TRAFFIC_GREEN:
+            // GREEN light: Wait until GREEN finishes, then go YELLOW → RED → Pedestrian
+            Serial.println("🚦 PEDESTRIAN: GREEN light detected — WILL WAIT for cycle to complete");
+            break;
+            
+        case TRAFFIC_PEDESTRIAN:
+            // Already in pedestrian mode
+            break;
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PEDESTRIAN CROSSING
+// START PEDESTRIAN CROSSING
 // ─────────────────────────────────────────────────────────────────────────────
 void startPedestrianCrossing() {
-    Serial.println("🚶 PEDESTRIAN CROSSING STARTED");
-    pedCrossing = true;
-    pedRequested = false;
-    currentPhase = PHASE_RED;
-    phaseEndMs = millis() + (PED_CROSS_TIME * 1000UL);
+    Serial.println("🚶 PEDESTRIAN CROSSING STARTED (3 seconds)");
     
-    setTrafficLight(PHASE_RED);
-    publishState("RED");
+    pedState = PED_CROSSING;
+    currentTrafficPhase = TRAFFIC_PEDESTRIAN;
     
-    // Turn pedestrian green ON
-    digitalWrite(PED_RED_LED,   LOW);
-    digitalWrite(PED_GREEN_LED, HIGH);
+    // Turn traffic light to RED
+    setTrafficLight(TRAFFIC_RED);
+    
+    // Turn pedestrian light to GREEN
+    setPedestrianLight(true);
+    
+    // Set crossing duration (3 seconds fixed)
+    pedestrianEndMs = millis() + PED_CROSSING_TIME;
+    phaseEndMs = pedestrianEndMs;
     
     // Notify server
     StaticJsonDocument<128> doc;
     doc["road"]     = ROAD_ID;
     doc["crossing"] = true;
-    doc["duration"] = PED_CROSS_TIME;
+    doc["duration"] = PED_CROSSING_TIME / 1000;
     char buf[128];
     serializeJson(doc, buf);
     mqttClient.publish(PUB_PED.c_str(), buf);
     
-    pedStartMs = millis();
+    publishState("PEDESTRIAN_CROSSING");
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FINISH PEDESTRIAN CROSSING
+// ─────────────────────────────────────────────────────────────────────────────
+void finishPedestrianCrossing() {
+    Serial.println("✅ PEDESTRIAN CROSSING FINISHED");
+    
+    pedState = PED_IDLE;
+    
+    // Turn pedestrian light back to RED
+    setPedestrianLight(false);
+    
+    // Turn traffic light to YELLOW (as per logic: after pedestrian, YELLOW then GREEN)
+    currentTrafficPhase = TRAFFIC_YELLOW;
+    phaseEndMs = millis() + currentYellowTime;
+    setTrafficLight(TRAFFIC_YELLOW);
+    publishState("YELLOW");
+    
+    Serial.print("🟡 YELLOW for ");
+    Serial.print(currentYellowTime / 1000);
+    Serial.println("s (after pedestrian)");
+    
+    // Notify server crossing finished
+    StaticJsonDocument<128> doc;
+    doc["road"]     = ROAD_ID;
+    doc["crossing"] = false;
+    doc["duration"] = 0;
+    char buf[128];
+    serializeJson(doc, buf);
+    mqttClient.publish(PUB_PED.c_str(), buf);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRAFFIC LIGHT STATE MACHINE
+// ─────────────────────────────────────────────────────────────────────────────
+void updateTrafficLight() {
+    if (millis() < phaseEndMs) return;
+    
+    switch(currentTrafficPhase) {
+        case TRAFFIC_RED:
+            // RED finished → start GREEN
+            currentTrafficPhase = TRAFFIC_GREEN;
+            phaseEndMs = millis() + currentGreenTime;
+            setTrafficLight(TRAFFIC_GREEN);
+            publishState("GREEN");
+            Serial.print("🟢 GREEN for ");
+            Serial.print(currentGreenTime / 1000);
+            Serial.println("s");
+            
+            // Reset heavy vehicle bonus flag for next cycle
+            heavyVehicleBonusApplied = false;
+            break;
+            
+        case TRAFFIC_GREEN:
+            // GREEN finished → check for waiting pedestrian
+            if (pedState == PED_WAITING) {
+                // Pedestrian is waiting, go to YELLOW then pedestrian
+                Serial.println("🚦 Pedestrian waiting — proceeding to YELLOW");
+            }
+            currentTrafficPhase = TRAFFIC_YELLOW;
+            phaseEndMs = millis() + currentYellowTime;
+            setTrafficLight(TRAFFIC_YELLOW);
+            publishState("YELLOW");
+            Serial.print("🟡 YELLOW for ");
+            Serial.print(currentYellowTime / 1000);
+            Serial.println("s");
+            break;
+            
+        case TRAFFIC_YELLOW:
+            // YELLOW finished → check if pedestrian waiting
+            if (pedState == PED_WAITING) {
+                // Serve pedestrian crossing
+                startPedestrianCrossing();
+            } else {
+                // No pedestrian, go back to RED
+                currentTrafficPhase = TRAFFIC_RED;
+                phaseEndMs = millis() + currentRedTime;
+                setTrafficLight(TRAFFIC_RED);
+                publishState("RED");
+                Serial.print("🔴 RED for ");
+                Serial.print(currentRedTime / 1000);
+                Serial.println("s");
+            }
+            break;
+            
+        case TRAFFIC_PEDESTRIAN:
+            // Pedestrian crossing finished
+            finishPedestrianCrossing();
+            break;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UPDATE PEDESTRIAN CROSSING TIMER
+// ─────────────────────────────────────────────────────────────────────────────
 void updatePedestrianCrossing() {
-    if (!pedCrossing) return;
-    if (millis() - pedStartMs >= (PED_CROSS_TIME * 1000UL)) {
-        // Crossing done
-        pedCrossing = false;
-        digitalWrite(PED_GREEN_LED, LOW);
-        digitalWrite(PED_RED_LED,   HIGH);
+    if (pedState != PED_CROSSING) return;
+    
+    if (millis() >= pedestrianEndMs) {
+        finishPedestrianCrossing();
+    } else {
+        // Show countdown on 7-segment display during crossing
+        unsigned long remaining = (pedestrianEndMs - millis()) / 1000;
+        if (remaining <= 3) {  // Only show last 3 seconds
+            showCountdown(remaining);
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PEDESTRIAN BUTTON CHECK
+// ─────────────────────────────────────────────────────────────────────────────
+void checkPedestrianButton() {
+    // Button pressed (LOW because INPUT_PULLUP)
+    if (digitalRead(PED_BUTTON) == LOW) {
+        // Debounce delay
+        delay(50);
+        if (digitalRead(PED_BUTTON) == LOW) {
+            
+            if (pedState == PED_IDLE) {
+                pedState = PED_WAITING;
+                pedRequestTime = millis();
+                Serial.println("🚶🚦 PEDESTRIAN BUTTON PRESSED — Waiting for crossing opportunity");
+                
+                // Notify server
+                StaticJsonDocument<128> doc;
+                doc["road"]      = ROAD_ID;
+                doc["requested"] = true;
+                char buf[128];
+                serializeJson(doc, buf);
+                mqttClient.publish(PUB_PED.c_str(), buf);
+                
+                // Handle based on current traffic light phase
+                handlePedestrianRequest();
+                
+                // Wait for button release
+                while(digitalRead(PED_BUTTON) == LOW) {
+                    delay(10);
+                }
+            } else if (pedState == PED_WAITING) {
+                Serial.println("🚶 Pedestrian already waiting...");
+            } else if (pedState == PED_CROSSING) {
+                Serial.println("🚶 Pedestrian already crossing...");
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PIEZO SENSOR - HEAVY VEHICLE DETECTION
+// ─────────────────────────────────────────────────────────────────────────────
+void updatePiezoSensor() {
+    int piezoValue = analogRead(PIEZO_PIN);
+    
+    // Detect heavy vehicle (vibration/shock)
+    // Threshold can be adjusted based on testing
+    bool currentHeavyVehicle = (piezoValue > 400);
+    
+    if (currentHeavyVehicle && !heavyVehicleDetected) {
+        // New heavy vehicle detected
+        heavyVehicleDetected = true;
+        heavyVehicleDetectTime = millis();
+        Serial.print("🚛🚛 HEAVY VEHICLE DETECTED! Value: ");
+        Serial.print(piezoValue);
+        Serial.println(" - Adding +5s to next GREEN phase");
+        
+        // Update timings immediately
+        updateTimings();
         
         // Notify server
         StaticJsonDocument<128> doc;
-        doc["road"]     = ROAD_ID;
-        doc["crossing"] = false;
-        doc["duration"] = PED_CROSS_TIME;
+        doc["road"]         = ROAD_ID;
+        doc["piezoValue"]   = piezoValue;
+        doc["heavyVehicle"] = true;
         char buf[128];
         serializeJson(doc, buf);
-        mqttClient.publish(PUB_PED.c_str(), buf);
+        mqttClient.publish(PUB_PIEZO.c_str(), buf);
         
-        Serial.println("✅ Pedestrian crossing finished — returning to RED");
-        
-        // Start RED phase
-        currentPhase = PHASE_RED;
-        phaseEndMs = millis() + currentRedTime;
-        setTrafficLight(PHASE_RED);
-        publishState("RED");
+    } else if (!currentHeavyVehicle && heavyVehicleDetected) {
+        // Vehicle passed, but keep heavyVehicleDetected true until next cycle
+        // It will be reset when GREEN phase starts
+        Serial.println("🚛 Heavy vehicle passed - bonus will apply to current cycle");
     }
 }
 
@@ -511,7 +487,7 @@ void publishUltrasonic() {
     lastUltraPublish = millis();
     
     float dist = measureDistance();
-    bool  hasVehicle = (dist < 5000 && dist <= 400);
+    bool hasVehicle = (dist < 5000 && dist <= 400);
     
     StaticJsonDocument<128> doc;
     doc["road"]          = ROAD_ID;
@@ -529,29 +505,24 @@ void publishUltrasonic() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IR SENSORS (UPDATED WITH TIMING UPDATE)
+// IR SENSORS
 // ─────────────────────────────────────────────────────────────────────────────
 void publishIR() {
     if (millis() - lastIRPublish < 1000) return;
     lastIRPublish = millis();
     
-    // Read IR sensors (LOW = blocked (vehicle present), HIGH = clear)
     bool newIr1 = (digitalRead(IR_SENSOR_1) == LOW);
     bool newIr2 = (digitalRead(IR_SENSOR_2) == LOW);
     
-    // Check if state changed
     if (newIr1 != ir1Blocked || newIr2 != ir2Blocked) {
         ir1Blocked = newIr1;
         ir2Blocked = newIr2;
-        updateTimings();  // Recalculate timings when IR state changes
+        updateTimings();
     }
     
     String queueLevel = "None";
-    if (ir1Blocked && ir2Blocked) {
-        queueLevel = "Heavy";
-    } else if (ir1Blocked || ir2Blocked) {
-        queueLevel = "Light";
-    }
+    if (ir1Blocked && ir2Blocked) queueLevel = "Heavy";
+    else if (ir1Blocked || ir2Blocked) queueLevel = "Light";
     
     StaticJsonDocument<128> doc;
     doc["road"]       = ROAD_ID;
@@ -568,51 +539,20 @@ void publishIR() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PIEZO SENSOR (HEAVY VEHICLE DETECTION)
-// ─────────────────────────────────────────────────────────────────────────────
-void publishPiezo() {
-    if (millis() - lastPiezoPublish < 1000) return;
-    lastPiezoPublish = millis();
-    
-    int piezoVal = analogRead(PIEZO_PIN);
-    bool heavyVehicle = (piezoVal > 500); // Adjust threshold for your sensor
-    
-    if (heavyVehicle != heavyVehicleDetected) {
-        heavyVehicleDetected = heavyVehicle;
-        if (heavyVehicleDetected) {
-            Serial.println("🚛 Heavy vehicle detected! Increasing priority");
-            // Optionally update timings for heavy vehicle
-            updateTimings();
-        }
-    }
-    
-    StaticJsonDocument<128> doc;
-    doc["road"]         = ROAD_ID;
-    doc["piezoValue"]   = piezoVal;
-    doc["heavyVehicle"] = heavyVehicle;
-    char buf[128];
-    serializeJson(doc, buf);
-    mqttClient.publish(PUB_PIEZO.c_str(), buf);
-    
-    if (heavyVehicle)
-        Serial.println("🚛 PIEZO: Heavy vehicle detected! val=" + String(piezoVal));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// RAIN SENSOR (UPDATED WITH TIMING UPDATE)
+// RAIN SENSOR
 // ─────────────────────────────────────────────────────────────────────────────
 void publishRain() {
     if (millis() - lastRainPublish < 2000) return;
     lastRainPublish = millis();
     
-    bool newRain = (digitalRead(RAIN_PIN) == LOW); // LOW = rain
+    bool newRain = (digitalRead(RAIN_PIN) == LOW);
     
     if (newRain != rainDetected) {
         rainDetected = newRain;
-        updateTimings();  // Recalculate timings when rain state changes
+        updateTimings();
         
         if (rainDetected) {
-            Serial.println("🌧️ RAIN DETECTED — Yellow extended to 5s (3s + 2s)");
+            Serial.println("🌧️🌧️ RAIN DETECTED — Yellow extended to 5s");
         } else {
             Serial.println("☀️ RAIN STOPPED — Yellow back to 3s");
         }
@@ -627,24 +567,7 @@ void publishRain() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PEDESTRIAN BUTTON CHECK
-// ─────────────────────────────────────────────────────────────────────────────
-void checkPedestrianButton() {
-    if (digitalRead(PED_BUTTON) == LOW && !pedRequested && !pedCrossing) {
-        pedRequested = true;
-        Serial.println("🚶 Pedestrian button pressed — will cross after current green phase");
-        
-        StaticJsonDocument<128> doc;
-        doc["road"]      = ROAD_ID;
-        doc["requested"] = true;
-        char buf[128];
-        serializeJson(doc, buf);
-        mqttClient.publish(PUB_PED.c_str(), buf);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MQTT CALLBACK — receives commands from server (force override)
+// MQTT CALLBACK (Force Override)
 // ─────────────────────────────────────────────────────────────────────────────
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     String msg = "";
@@ -660,33 +583,32 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     int greenTime  = doc["greenTime"]  | 5;
     int yellowTime = doc["yellowTime"] | 5;
     
-    Serial.println("📩 CMD: " + signal + " green=" + String(greenTime) + "s yellow=" + String(yellowTime) + "s");
+    Serial.println("📩 FORCE CMD: " + signal + " green=" + String(greenTime) + "s");
     
     if (signal == "GREEN") {
-        // Override normal cycle
-        currentPhase = PHASE_GREEN;
+        currentTrafficPhase = TRAFFIC_GREEN;
         phaseEndMs = millis() + (greenTime * 1000UL);
-        setTrafficLight(PHASE_GREEN);
+        setTrafficLight(TRAFFIC_GREEN);
         publishState("GREEN");
         Serial.println("🟢 FORCE GREEN for " + String(greenTime) + "s");
         
     } else if (signal == "YELLOW") {
-        currentPhase = PHASE_YELLOW;
+        currentTrafficPhase = TRAFFIC_YELLOW;
         phaseEndMs = millis() + (yellowTime * 1000UL);
-        setTrafficLight(PHASE_YELLOW);
+        setTrafficLight(TRAFFIC_YELLOW);
         publishState("YELLOW");
         Serial.println("🟡 FORCE YELLOW for " + String(yellowTime) + "s");
         
     } else if (signal == "RED") {
-        currentPhase = PHASE_RED;
-        setTrafficLight(PHASE_RED);
+        currentTrafficPhase = TRAFFIC_RED;
+        setTrafficLight(TRAFFIC_RED);
         publishState("RED");
         Serial.println("🔴 FORCE RED");
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WiFi + MQTT CONNECT
+// WiFi + MQTT CONNECTION
 // ─────────────────────────────────────────────────────────────────────────────
 void connectWiFi() {
     Serial.print("Connecting WiFi: ");
@@ -720,35 +642,40 @@ void connectMQTT() {
 void setup() {
     Serial.begin(115200);
     Serial.println("\n🚦 HYDRA Node — Road: " + String(ROAD_ID));
-    Serial.println("═══════════════════════════════════════════════════");
-    Serial.println("TIMING CONFIGURATION (ESP32 Base Code):");
+    Serial.println("═══════════════════════════════════════════════════════════");
+    Serial.println("TIMING CONFIGURATION:");
     Serial.println("  RED:   3s (fixed)");
     Serial.println("  YELLOW: 3s base + 2s when raining = 5s");
-    Serial.println("  GREEN:  3s base + traffic bonus");
+    Serial.println("  GREEN:  3s base + traffic bonus + heavy vehicle bonus");
     Serial.println("    - Light Traffic (1 IR): +3s = 6s total");
     Serial.println("    - Heavy Traffic (2 IR): +6s = 9s total");
-    Serial.println("═══════════════════════════════════════════════════\n");
+    Serial.println("    - Heavy Vehicle: +5s additional");
+    Serial.println("  PEDESTRIAN:");
+    Serial.println("    - Crossing time: 3s fixed");
+    Serial.println("    - Button during RED: Immediate crossing");
+    Serial.println("    - Button during YELLOW: Shows countdown, then crossing");
+    Serial.println("    - Button during GREEN: Waits for cycle to complete");
+    Serial.println("═══════════════════════════════════════════════════════════\n");
     
     // Output pins
-    pinMode(TRIG_PIN,    OUTPUT);
-    pinMode(RED_LED,     OUTPUT);
-    pinMode(YELLOW_LED,  OUTPUT);
-    pinMode(GREEN_LED,   OUTPUT);
+    pinMode(TRIG_PIN,      OUTPUT);
+    pinMode(RED_LED,       OUTPUT);
+    pinMode(YELLOW_LED,    OUTPUT);
+    pinMode(GREEN_LED,     OUTPUT);
     pinMode(PED_RED_LED,   OUTPUT);
     pinMode(PED_GREEN_LED, OUTPUT);
     
     // Input pins
-    pinMode(ECHO_PIN,    INPUT);
-    pinMode(IR_SENSOR_1, INPUT_PULLUP);
-    pinMode(IR_SENSOR_2, INPUT_PULLUP);
-    pinMode(PIEZO_PIN,   INPUT);
-    pinMode(RAIN_PIN,    INPUT_PULLUP);
-    pinMode(PED_BUTTON,  INPUT_PULLUP);
+    pinMode(ECHO_PIN,      INPUT);
+    pinMode(IR_SENSOR_1,   INPUT_PULLUP);
+    pinMode(IR_SENSOR_2,   INPUT_PULLUP);
+    pinMode(PIEZO_PIN,     INPUT);
+    pinMode(RAIN_PIN,      INPUT_PULLUP);
+    pinMode(PED_BUTTON,    INPUT_PULLUP);
     
     // Safe start state
-    setTrafficLight(PHASE_RED);
-    digitalWrite(PED_RED_LED,   HIGH);
-    digitalWrite(PED_GREEN_LED, LOW);
+    setTrafficLight(TRAFFIC_RED);
+    setPedestrianLight(false);
     
     // Initial sensor readings
     ir1Blocked = (digitalRead(IR_SENSOR_1) == LOW);
@@ -771,23 +698,23 @@ void setup() {
     connectMQTT();
     
     // Start with RED phase
-    currentPhase = PHASE_RED;
+    currentTrafficPhase = TRAFFIC_RED;
     phaseEndMs = millis() + currentRedTime;
-    setTrafficLight(PHASE_RED);
+    setTrafficLight(TRAFFIC_RED);
     publishState("RED");
     Serial.println("🔴 Starting with RED for " + String(currentRedTime / 1000) + "s");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOOP
+// MAIN LOOP
 // ─────────────────────────────────────────────────────────────────────────────
 void loop() {
     // Keep MQTT alive
     if (!mqttClient.connected()) connectMQTT();
     mqttClient.loop();
     
-    // Update light phase timer
-    updateLightPhase();
+    // Update traffic light phase
+    updateTrafficLight();
     
     // Update pedestrian crossing timer
     updatePedestrianCrossing();
@@ -795,9 +722,23 @@ void loop() {
     // Check pedestrian button
     checkPedestrianButton();
     
+    // Update piezo sensor for heavy vehicle detection
+    updatePiezoSensor();
+    
     // Publish all sensor data
     publishUltrasonic();
     publishIR();
-    publishPiezo();
     publishRain();
+    
+    // Publish piezo periodically (but heavy vehicle detection already publishes on detection)
+    if (millis() - lastPiezoPublish > 5000) {
+        lastPiezoPublish = millis();
+        StaticJsonDocument<128> doc;
+        doc["road"]         = ROAD_ID;
+        doc["piezoValue"]   = analogRead(PIEZO_PIN);
+        doc["heavyVehicle"] = heavyVehicleDetected;
+        char buf[128];
+        serializeJson(doc, buf);
+        mqttClient.publish(PUB_PIEZO.c_str(), buf);
+    }
 }
