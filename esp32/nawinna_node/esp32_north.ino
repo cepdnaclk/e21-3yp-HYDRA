@@ -41,8 +41,8 @@
 //   PED_GREEN_LED= GPIO 21
 //   SEG_A        = GPIO 2
 //   SEG_B        = GPIO 15
-//   SEG_C        = GPIO 16
-//   SEG_D        = GPIO 17
+//   SEG_C        = GPIO 12
+//   SEG_D        = GPIO 13
 //   SEG_E        = GPIO 22
 //   SEG_F        = GPIO 23
 //   SEG_G        = GPIO 4
@@ -93,8 +93,8 @@ const int   MQTT_PORT   = 1883;
 // 7-Segment (common cathode — HIGH = segment ON)
 #define SEG_A           2
 #define SEG_B           15
-#define SEG_C           16
-#define SEG_D           17
+#define SEG_C           12
+#define SEG_D           13
 #define SEG_E           22
 #define SEG_F           23
 #define SEG_G           4
