@@ -1,5 +1,4 @@
-
-// // client/src/App.js — HYDRA Dashboard v4.0 — Backend-Aligned
+// // client/src/App.js — HYDRA Dashboard v4.0 — Backend-Aligned + Analytics
 // import React, { useState, useEffect, useRef } from 'react';
 // import io from 'socket.io-client';
 // import axios from 'axios';
@@ -155,7 +154,6 @@
 //     });
 //     const [rainDetected,  setRainDetected]  = useState(false);
 //     const [yellowTime,    setYellowTime]    = useState(3);
-//     // Dynamic red time from backend (= winner's green + yellow each cycle)
 //     const [redTime,       setRedTime]       = useState(0);
 //     const [greenTime,     setGreenTime]     = useState({ North:3, South:3, East:3, West:3 });
 //     const [pedStatus,     setPedStatus]     = useState({});
@@ -163,6 +161,14 @@
 //     const [connected,     setConnected]     = useState(false);
 //     const [chartHistory,  setChartHistory]  = useState([]);
 //     const [notification,  setNotification]  = useState(null);
+
+//     // ── Analytics state (Step 9) ──────────────────────────────────────────────
+//     const [analyticsData, setAnalyticsData] = useState({
+//         peakHours: [],
+//         roadPerf: [],
+//         efficiency: { modeBreakdown: [], last1Hour: {}, totalCycles24h: 0 }
+//     });
+//     const [analyticsTab, setAnalyticsTab] = useState('congestion');
 
 //     const socketRef = useRef(null);
 
@@ -191,7 +197,6 @@
 //                 setRainDetected(data.rainDetected);
 //                 setYellowTime(data.rainDetected ? 5 : 3);
 //             }
-//             // Backend sends dynamic redTime = winner green + yellow
 //             if (data.redTime !== undefined) setRedTime(data.redTime);
 //             if (data.greenTime)       setGreenTime(data.greenTime);
 //             if (data.pedStatus)       setPedStatus(data.pedStatus);
@@ -228,6 +233,26 @@
 //             setGoogleWorking(gw);
 //         });
 
+//         // ── Analytics socket listener (Step 9) ───────────────────────────────
+//         socket.on('analyticsUpdate', (data) => {
+//             setAnalyticsData({
+//                 peakHours: data.peakHours || [],
+//                 roadPerf: data.roadPerf || [],
+//                 efficiency: data.efficiency || { modeBreakdown: [], last1Hour: {}, totalCycles24h: 0 }
+//             });
+//         });
+
+//         // ── Load analytics on first connect (Step 9) ─────────────────────────
+//         axios.get(`${SERVER}/api/analytics/road-performance`).then(r => {
+//             setAnalyticsData(prev => ({ ...prev, roadPerf: r.data }));
+//         }).catch(() => {});
+//         axios.get(`${SERVER}/api/analytics/peak-hours`).then(r => {
+//             setAnalyticsData(prev => ({ ...prev, peakHours: r.data }));
+//         }).catch(() => {});
+//         axios.get(`${SERVER}/api/analytics/system-efficiency`).then(r => {
+//             setAnalyticsData(prev => ({ ...prev, efficiency: r.data }));
+//         }).catch(() => {});
+
 //         return () => socket.disconnect();
 //     }, []);
 
@@ -250,17 +275,14 @@
 //         }))
 //     };
 
-//     const winner    = decision?.winner;
-//     // Use redForOthers from decision (dynamic: winner green + yellow)
+//     const winner       = decision?.winner;
 //     const redForOthers = decision?.redForOthers || redTime || 0;
 
-//     // Per-road sensor scenario from decision priorities
 //     const scenarioMap = {};
 //     if (decision?.priorities) {
 //         decision.priorities.forEach(p => { scenarioMap[p.road] = p.sensorScenario; });
 //     }
 
-//     // Green time per road from decision priorities (most accurate source)
 //     const decisionGreenMap = {};
 //     if (decision?.priorities) {
 //         decision.priorities.forEach(p => { decisionGreenMap[p.road] = p.greenTime; });
@@ -303,7 +325,6 @@
 //                     <span style={{ background: '#1e293b', color: '#94a3b8', padding: '3px 12px', borderRadius: 20, fontSize: 12 }}>
 //                         Mode: {decision?.mode || 'Starting...'}
 //                     </span>
-//                     {/* Rain indicator */}
 //                     <span style={{
 //                         background: rainDetected ? '#1e3a5f' : '#14532d',
 //                         color: rainDetected ? '#60a5fa' : '#4ade80',
@@ -348,7 +369,6 @@
 //                                 </div>
 //                             )}
 //                         </div>
-//                         {/* Winner bulbs */}
 //                         <div style={{ display: 'flex', gap: 10 }}>
 //                             {['RED','YELLOW','GREEN'].map(c => (
 //                                 <div key={c} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
@@ -374,11 +394,7 @@
 //                     const ir        = irData[road] || { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' };
 //                     const ped       = pedStatus[road] || { requested: false, crossing: false, duration: 0 };
 //                     const scenario  = scenarioMap[road] || null;
-
-//                     // Green time: from decision priorities (most accurate), fallback to greenTime state
 //                     const roadGreenTime = decisionGreenMap[road] || greenTime[road] || 3;
-
-//                     // For non-winner roads: show their current RED countdown and the redForOthers context
 //                     const isNonWinnerOnRed = !isWin && phase === 'RED';
 
 //                     return (
@@ -389,7 +405,6 @@
 //                         }}>
 //                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
 //                                 <div style={{ flex: 1 }}>
-//                                     {/* Card header */}
 //                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
 //                                         <h3 style={{ margin: 0, color: '#cbd5e1', fontSize: 14, letterSpacing: 2, textTransform: 'uppercase' }}>
 //                                             {road} ROAD
@@ -398,7 +413,6 @@
 //                                         {scenario && <ScenarioBadge scenario={scenario} />}
 //                                     </div>
 
-//                                     {/* Traffic light indicators */}
 //                                     <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center' }}>
 //                                         {['RED','YELLOW','GREEN'].map(c => (
 //                                             <div key={c} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
@@ -417,7 +431,6 @@
 //                                             <span style={{ fontSize: 12, fontWeight: 'bold', color: phase === 'GREEN' ? '#4ade80' : phase === 'YELLOW' ? '#fde047' : '#f87171' }}>
 //                                                 {phase}{count > 0 ? ` (${count}s)` : ''}
 //                                             </span>
-//                                             {/* For non-winner roads on RED: show dynamic red duration */}
 //                                             {isNonWinnerOnRed && redForOthers > 0 && (
 //                                                 <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
 //                                                     RED for {redForOthers}s this cycle
@@ -438,7 +451,6 @@
 //                                             }}>
 //                                                 {sensorWorking[road] ? '● ACTIVE' : '● OFFLINE'}
 //                                             </span>
-//                                             {/* Show which sensor scenario is in use */}
 //                                             {scenario && (
 //                                                 <span style={{ fontSize: 10, color: '#64748b' }}>
 //                                                     → {scenario === 'IR' ? 'Using IR (dist < 20cm)' : 'Using distance'}
@@ -577,7 +589,7 @@
 //                 }} />
 //             </div>
 
-//             {/* Priority Table — updated with scenario column and dynamic red */}
+//             {/* Priority Table */}
 //             {decision?.priorities && (
 //                 <div style={{ background: 'linear-gradient(160deg,#1a2540,#111827)', borderRadius: 16, padding: 20, marginBottom: 22, border: '1px solid #1e3a5f' }}>
 //                     <h3 style={{ margin: '0 0 14px', color: '#94a3b8', fontSize: 14 }}>📋 Signal Priority Analysis</h3>
@@ -628,7 +640,6 @@
 //                             </tbody>
 //                         </table>
 //                     </div>
-//                     {/* Dynamic RED explanation */}
 //                     <div style={{ marginTop: 12, padding: 10, background: '#0f172a', borderRadius: 8, fontSize: 11, color: '#64748b', border: '1px solid #1e3a5f' }}>
 //                         🔴 <strong style={{ color: '#94a3b8' }}>Dynamic RED (non-priority roads):</strong>&nbsp;
 //                         {winner && decision?.greenDuration
@@ -651,6 +662,235 @@
 //                 </div>
 //             </div>
 
+//             {/* ── ANALYTICS DASHBOARD ─────────────────────────────────── */}
+//             <div style={{ background: 'linear-gradient(160deg,#1a2540,#111827)', borderRadius: 16, padding: 20, marginTop: 22, border: '1px solid #1e3a5f' }}>
+//                 <h3 style={{ margin: '0 0 16px', color: '#94a3b8', fontSize: 15 }}>📊 Traffic Analytics — Real World Insights</h3>
+
+//                 {/* Tab Buttons */}
+//                 <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+//                     {[
+//                         { id: 'congestion', label: '🔥 Congestion Score' },
+//                         { id: 'peakhours', label: '⏰ Peak Hours' },
+//                         { id: 'efficiency', label: '⚡ System Mode' },
+//                         { id: 'waittimes', label: '⏳ Wait Times' }
+//                     ].map(tab => (
+//                         <button key={tab.id} onClick={() => setAnalyticsTab(tab.id)}
+//                             style={{
+//                                 background: analyticsTab === tab.id ? '#1e3a5f' : '#0f172a',
+//                                 color: analyticsTab === tab.id ? '#60a5fa' : '#475569',
+//                                 border: `1px solid ${analyticsTab === tab.id ? '#3b82f6' : '#334155'}`,
+//                                 padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold'
+//                             }}>
+//                             {tab.label}
+//                         </button>
+//                     ))}
+//                 </div>
+
+//                 {/* TAB 1: Congestion Score per Road */}
+//                 {analyticsTab === 'congestion' && (
+//                     <div>
+//                         <p style={{ fontSize: 11, color: '#64748b', marginBottom: 12 }}>
+//                             Congestion Score (0–100) based on ultrasonic distance + IR sensors + Google traffic + rain. Higher = more urgent.
+//                         </p>
+//                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
+//                             {analyticsData.roadPerf.length > 0 ? analyticsData.roadPerf.map(r => {
+//                                 const score = r.avgCongestion;
+//                                 const color = score > 70 ? '#ef4444' : score > 40 ? '#f59e0b' : '#22c55e';
+//                                 return (
+//                                     <div key={r.road} style={{ background: '#0f172a', borderRadius: 12, padding: 14, border: `1px solid ${color}44` }}>
+//                                         <div style={{ fontWeight: 'bold', color: '#e2e8f0', marginBottom: 8 }}>{r.road} Road</div>
+//                                         <div style={{ background: '#1e293b', borderRadius: 4, height: 10, marginBottom: 6 }}>
+//                                             <div style={{ width: `${score}%`, background: color, height: '100%', borderRadius: 4, transition: 'width 1s' }} />
+//                                         </div>
+//                                         <div style={{ fontSize: 22, fontWeight: 'bold', color, marginBottom: 8 }}>{score}/100</div>
+//                                         <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.6 }}>
+//                                             <div>🟢 Avg Green: {r.avgGreenTime}s</div>
+//                                             <div>⏳ Avg Wait: {r.avgWaitTime}s</div>
+//                                             <div>🏆 Priority Wins: {r.priorityWins}</div>
+//                                             <div>🔴 Heavy IR Events: {r.heavyTrafficCount}</div>
+//                                             <div>⚡ Efficiency: {r.efficiency}%</div>
+//                                         </div>
+//                                     </div>
+//                                 );
+//                             }) : (
+//                                 <div style={{ color: '#475569', fontSize: 12, padding: 20 }}>
+//                                     Collecting data... Analytics appear after first traffic cycles complete.
+//                                 </div>
+//                             )}
+//                         </div>
+
+//                         {/* Live Congestion from current sensors */}
+//                         <div style={{ marginTop: 16, padding: 12, background: '#0f172a', borderRadius: 10, border: '1px solid #1e3a5f' }}>
+//                             <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>⚡ LIVE Congestion Right Now (from current sensor readings)</div>
+//                             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+//                                 {ROADS.map(road => {
+//                                     const dist = sensorData[road] || 5000;
+//                                     const ir = irData[road] || {};
+//                                     const google = googleTraffic[road] || 'Unknown';
+//                                     let liveScore = 0;
+//                                     if (dist < 20) liveScore += 40;
+//                                     else if (dist < 50) liveScore += 30;
+//                                     else if (dist < 100) liveScore += 20;
+//                                     else if (dist < 200) liveScore += 10;
+//                                     if (ir.queueLevel === 'Heavy') liveScore += 35;
+//                                     else if (ir.queueLevel === 'Light') liveScore += 15;
+//                                     if (google === 'Light') liveScore += 20;
+//                                     else if (google === 'Medium') liveScore += 12;
+//                                     else if (google === 'Heavy') liveScore += 5;
+//                                     if (rainDetected) liveScore += 5;
+//                                     liveScore = Math.min(100, liveScore);
+//                                     const c = liveScore > 70 ? '#ef4444' : liveScore > 40 ? '#f59e0b' : '#22c55e';
+//                                     return (
+//                                         <div key={road} style={{ flex: 1, minWidth: 100, background: '#1e293b', borderRadius: 8, padding: 10, border: `1px solid ${c}44`, textAlign: 'center' }}>
+//                                             <div style={{ fontSize: 11, color: '#64748b' }}>{road}</div>
+//                                             <div style={{ fontSize: 20, fontWeight: 'bold', color: c }}>{liveScore}</div>
+//                                             <div style={{ fontSize: 9, color: '#475569' }}>/ 100</div>
+//                                         </div>
+//                                     );
+//                                 })}
+//                             </div>
+//                         </div>
+//                     </div>
+//                 )}
+
+//                 {/* TAB 2: Peak Hours */}
+//                 {analyticsTab === 'peakhours' && (
+//                     <div>
+//                         <p style={{ fontSize: 11, color: '#64748b', marginBottom: 12 }}>
+//                             Average congestion by hour of day (last 7 days). Helps identify morning/evening rush hours at Nawinna Junction.
+//                         </p>
+//                         {analyticsData.peakHours.length > 0 ? (
+//                             <div style={{ overflowX: 'auto' }}>
+//                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+//                                     <thead>
+//                                         <tr style={{ borderBottom: '1px solid #1e3a5f' }}>
+//                                             {['Hour', 'North', 'South', 'East', 'West', 'Peak?'].map(h => (
+//                                                 <th key={h} style={{ padding: '8px 10px', color: '#475569', textAlign: 'left' }}>{h}</th>
+//                                             ))}
+//                                         </tr>
+//                                     </thead>
+//                                     <tbody>
+//                                         {analyticsData.peakHours.filter(h => h.North > 0 || h.South > 0 || h.East > 0 || h.West > 0).map(h => {
+//                                             const maxScore = Math.max(h.North, h.South, h.East, h.West);
+//                                             const isPeak = maxScore > 60;
+//                                             return (
+//                                                 <tr key={h.hour} style={{ borderBottom: '1px solid #0f172a', background: isPeak ? 'rgba(239,68,68,0.05)' : 'transparent' }}>
+//                                                     <td style={{ padding: '6px 10px', color: '#94a3b8', fontWeight: 'bold' }}>
+//                                                         {h.hour.toString().padStart(2,'0')}:00
+//                                                     </td>
+//                                                     {['North','South','East','West'].map(road => {
+//                                                         const s = h[road] || 0;
+//                                                         const c = s > 60 ? '#ef4444' : s > 30 ? '#f59e0b' : '#22c55e';
+//                                                         return (
+//                                                             <td key={road} style={{ padding: '6px 10px' }}>
+//                                                                 <span style={{ color: c, fontWeight: 'bold' }}>{s}</span>
+//                                                                 <div style={{ background: '#1e293b', borderRadius: 2, height: 4, marginTop: 3, width: 60 }}>
+//                                                                     <div style={{ width: `${s}%`, background: c, height: '100%', borderRadius: 2 }} />
+//                                                                 </div>
+//                                                             </td>
+//                                                         );
+//                                                     })}
+//                                                     <td style={{ padding: '6px 10px', color: isPeak ? '#f87171' : '#4ade80', fontWeight: 'bold', fontSize: 10 }}>
+//                                                         {isPeak ? '🔴 PEAK' : '✅ Normal'}
+//                                                     </td>
+//                                                 </tr>
+//                                             );
+//                                         })}
+//                                     </tbody>
+//                                 </table>
+//                                 {analyticsData.peakHours.filter(h => h.North > 0 || h.South > 0 || h.East > 0 || h.West > 0).length === 0 && (
+//                                     <div style={{ color: '#475569', fontSize: 12, padding: 20 }}>No peak hour data yet — system needs to run for a few cycles first.</div>
+//                                 )}
+//                             </div>
+//                         ) : (
+//                             <div style={{ color: '#475569', fontSize: 12, padding: 20 }}>Collecting peak hour data... Check back after the system runs for a while.</div>
+//                         )}
+//                     </div>
+//                 )}
+
+//                 {/* TAB 3: System Mode Efficiency */}
+//                 {analyticsTab === 'efficiency' && (
+//                     <div>
+//                         <p style={{ fontSize: 11, color: '#64748b', marginBottom: 12 }}>
+//                             Shows how often the system uses each data source. BOTH mode (sensors + Google) is most accurate.
+//                         </p>
+//                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12, marginBottom: 16 }}>
+//                             {[
+//                                 { label: 'Total Cycles (24h)', value: analyticsData.efficiency.totalCycles24h, icon: '🔄', color: '#60a5fa' },
+//                                 { label: 'Avg Congestion (1h)', value: `${Math.round(analyticsData.efficiency.last1Hour?.avgCongestion || 0)}/100`, icon: '📊', color: '#f59e0b' },
+//                                 { label: 'Avg Green Time (1h)', value: `${Math.round((analyticsData.efficiency.last1Hour?.avgGreenTime || 3) * 10) / 10}s`, icon: '🟢', color: '#22c55e' },
+//                                 { label: 'Recent Cycles (1h)', value: analyticsData.efficiency.last1Hour?.totalCycles || 0, icon: '⏱️', color: '#a78bfa' }
+//                             ].map(stat => (
+//                                 <div key={stat.label} style={{ background: '#0f172a', borderRadius: 10, padding: 14, border: `1px solid ${stat.color}33` }}>
+//                                     <div style={{ fontSize: 10, color: '#64748b', marginBottom: 6 }}>{stat.icon} {stat.label}</div>
+//                                     <div style={{ fontSize: 20, fontWeight: 'bold', color: stat.color }}>{stat.value}</div>
+//                                 </div>
+//                             ))}
+//                         </div>
+
+//                         {/* Mode breakdown */}
+//                         <div style={{ background: '#0f172a', borderRadius: 10, padding: 14, border: '1px solid #1e3a5f' }}>
+//                             <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 12, fontWeight: 'bold' }}>Decision Mode Breakdown (Last 24h)</div>
+//                             {analyticsData.efficiency.modeBreakdown.length > 0 ? analyticsData.efficiency.modeBreakdown.map(m => {
+//                                 const modeColors = { BOTH: '#22c55e', SENSOR_ONLY: '#60a5fa', GOOGLE_ONLY: '#a78bfa', FALLBACK: '#f59e0b' };
+//                                 const c = modeColors[m.mode] || '#64748b';
+//                                 const modeDesc = {
+//                                     BOTH: 'Using sensors + Google Maps (most accurate)',
+//                                     SENSOR_ONLY: 'Sensors only — Google API unavailable',
+//                                     GOOGLE_ONLY: 'Google only — sensors offline',
+//                                     FALLBACK: 'Fixed timing — all data unavailable'
+//                                 };
+//                                 return (
+//                                     <div key={m.mode} style={{ marginBottom: 12 }}>
+//                                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+//                                             <span style={{ color: c, fontWeight: 'bold', fontSize: 12 }}>{m.mode}</span>
+//                                             <span style={{ color: '#94a3b8', fontSize: 11 }}>{m.percentage}% ({m.count} cycles)</span>
+//                                         </div>
+//                                         <div style={{ background: '#1e293b', borderRadius: 4, height: 8 }}>
+//                                             <div style={{ width: `${m.percentage}%`, background: c, height: '100%', borderRadius: 4, transition: 'width 1s' }} />
+//                                         </div>
+//                                         <div style={{ fontSize: 10, color: '#475569', marginTop: 3 }}>{modeDesc[m.mode]}</div>
+//                                     </div>
+//                                 );
+//                             }) : (
+//                                 <div style={{ color: '#475569', fontSize: 12 }}>Collecting mode data... Appears after first few cycles.</div>
+//                             )}
+//                         </div>
+//                     </div>
+//                 )}
+
+//                 {/* TAB 4: Wait Times */}
+//                 {analyticsTab === 'waittimes' && (
+//                     <div>
+//                         <p style={{ fontSize: 11, color: '#64748b', marginBottom: 12 }}>
+//                             Average wait time per road (time other roads wait while one road has green). Lower is better.
+//                         </p>
+//                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
+//                             {analyticsData.roadPerf.length > 0 ? analyticsData.roadPerf.map(r => {
+//                                 const wait = r.avgWaitTime;
+//                                 const color = wait > 30 ? '#ef4444' : wait > 15 ? '#f59e0b' : '#22c55e';
+//                                 return (
+//                                     <div key={r.road} style={{ background: '#0f172a', borderRadius: 12, padding: 14, border: `1px solid ${color}44` }}>
+//                                         <div style={{ fontWeight: 'bold', color: '#e2e8f0', marginBottom: 8 }}>{r.road} Road</div>
+//                                         <div style={{ fontSize: 28, fontWeight: 'bold', color, marginBottom: 4 }}>{wait}s</div>
+//                                         <div style={{ fontSize: 10, color: '#64748b' }}>average wait per cycle</div>
+//                                         <div style={{ marginTop: 10, fontSize: 11, color: '#475569', lineHeight: 1.8 }}>
+//                                             <div>Total cycles: {r.totalCycles}</div>
+//                                             <div>Rain cycles: {r.rainCycles}</div>
+//                                             <div style={{ color: wait > 30 ? '#ef4444' : '#4ade80', fontWeight: 'bold' }}>
+//                                                 {wait > 30 ? '⚠️ High wait — consider priority adjustment' : wait > 15 ? '⚡ Moderate — normal operation' : '✅ Low wait — good throughput'}
+//                                             </div>
+//                                         </div>
+//                                     </div>
+//                                 );
+//                             }) : (
+//                                 <div style={{ color: '#475569', fontSize: 12, padding: 20 }}>Collecting wait time data...</div>
+//                             )}
+//                         </div>
+//                     </div>
+//                 )}
+//             </div>
+
 //             <div style={{ textAlign: 'center', marginTop: 28, color: '#1e3a5f', fontSize: 11 }}>
 //                 HYDRA v4.0 — Backend-Aligned — Nawinna Junction, Kurunegala
 //             </div>
@@ -665,13 +905,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import axios from 'axios';
-import { Line } from 'react-chartjs-2';
-import {
-    Chart as ChartJS, CategoryScale, LinearScale, PointElement,
-    LineElement, Title, Tooltip, Legend
-} from 'chart.js';
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
 const SERVER = 'http://56.228.30.50:5000';
 const ROADS  = ['North', 'South', 'East', 'West'];
@@ -822,16 +1055,16 @@ function App() {
     const [pedStatus,     setPedStatus]     = useState({});
     const [decision,      setDecision]      = useState(null);
     const [connected,     setConnected]     = useState(false);
-    const [chartHistory,  setChartHistory]  = useState([]);
     const [notification,  setNotification]  = useState(null);
 
-    // ── Analytics state (Step 9) ──────────────────────────────────────────────
-    const [analyticsData, setAnalyticsData] = useState({
-        peakHours: [],
-        roadPerf: [],
+    // ── PHASE 8.1: New state variables ──────────────────────────────────────
+    const [espOnline,           setEspOnline]           = useState({ North: true, South: true, East: true, West: true });
+    const [heavyVehicleActive,  setHeavyVehicleActive]  = useState({ North: false, South: false, East: false, West: false });
+    const [analyticsTab,        setAnalyticsTab]        = useState('livecongestion');
+    const [analyticsData,       setAnalyticsData]       = useState({
+        peakHours: [], roadPerf: [],
         efficiency: { modeBreakdown: [], last1Hour: {}, totalCycles24h: 0 }
     });
-    const [analyticsTab, setAnalyticsTab] = useState('congestion');
 
     const socketRef = useRef(null);
 
@@ -863,17 +1096,9 @@ function App() {
             if (data.redTime !== undefined) setRedTime(data.redTime);
             if (data.greenTime)       setGreenTime(data.greenTime);
             if (data.pedStatus)       setPedStatus(data.pedStatus);
-
-            setChartHistory(prev => {
-                const e = {
-                    time:  new Date().toLocaleTimeString(),
-                    North: data.sensorData?.North >= 5000 ? null : data.sensorData?.North,
-                    South: data.sensorData?.South >= 5000 ? null : data.sensorData?.South,
-                    East:  data.sensorData?.East  >= 5000 ? null : data.sensorData?.East,
-                    West:  data.sensorData?.West  >= 5000 ? null : data.sensorData?.West,
-                };
-                return [...prev.slice(-29), e];
-            });
+            // PHASE 8.1: Add espOnline and heavyVehicleActive to fullState handler
+            if (data.espOnline)          setEspOnline(data.espOnline);
+            if (data.heavyVehicleActive) setHeavyVehicleActive(data.heavyVehicleActive);
         });
 
         socket.on('countdown',         ({ road, phase, remaining }) => {
@@ -896,16 +1121,22 @@ function App() {
             setGoogleWorking(gw);
         });
 
-        // ── Analytics socket listener (Step 9) ───────────────────────────────
+        // ── PHASE 8.1: New socket listeners ──────────────────────────────────
+        socket.on('espStatusUpdate', ({ road, online }) => {
+            setEspOnline(prev => ({ ...prev, [road]: online }));
+        });
+        socket.on('heavyVehicleUpdate', ({ road, active }) => {
+            setHeavyVehicleActive(prev => ({ ...prev, [road]: active }));
+        });
         socket.on('analyticsUpdate', (data) => {
             setAnalyticsData({
-                peakHours: data.peakHours || [],
-                roadPerf: data.roadPerf || [],
+                peakHours:  data.peakHours  || [],
+                roadPerf:   data.roadPerf   || [],
                 efficiency: data.efficiency || { modeBreakdown: [], last1Hour: {}, totalCycles24h: 0 }
             });
         });
 
-        // ── Load analytics on first connect (Step 9) ─────────────────────────
+        // ── Load analytics on first connect ──────────────────────────────────
         axios.get(`${SERVER}/api/analytics/road-performance`).then(r => {
             setAnalyticsData(prev => ({ ...prev, roadPerf: r.data }));
         }).catch(() => {});
@@ -926,16 +1157,6 @@ function App() {
         } catch (err) {
             showNotif(`❌ Failed: ${err.message}`, 'error');
         }
-    };
-
-    const chartData = {
-        labels: chartHistory.map(h => h.time),
-        datasets: ROADS.map((road, i) => ({
-            label: `${road} (cm)`,
-            data:  chartHistory.map(h => h[road]),
-            borderColor: ['#60a5fa','#f87171','#a78bfa','#34d399'][i],
-            tension: 0.3, spanGaps: false
-        }))
     };
 
     const winner       = decision?.winner;
@@ -1059,6 +1280,9 @@ function App() {
                     const scenario  = scenarioMap[road] || null;
                     const roadGreenTime = decisionGreenMap[road] || greenTime[road] || 3;
                     const isNonWinnerOnRed = !isWin && phase === 'RED';
+                    // PHASE 8.3: Add ESP32 status and Heavy Vehicle indicators
+                    const espUp     = espOnline[road] !== false;
+                    const heavyHere = heavyVehicleActive[road] || false;
 
                     return (
                         <div key={road} style={{
@@ -1074,6 +1298,24 @@ function App() {
                                         </h3>
                                         {isWin && <span style={{ color: '#4ade80', fontSize: 11, fontWeight: 'bold' }}>● PRIORITY</span>}
                                         {scenario && <ScenarioBadge scenario={scenario} />}
+                                        {/* PHASE 8.3: ESP32 OFFLINE and HEAVY VEHICLE badges */}
+                                        {!espUp && (
+                                            <span style={{
+                                                background: '#7f1d1d', color: '#f87171',
+                                                border: '1px solid #ef4444',
+                                                padding: '2px 8px', borderRadius: 8,
+                                                fontSize: 10, fontWeight: 'bold'
+                                            }}>⚡ ESP32 OFFLINE</span>
+                                        )}
+                                        {heavyHere && (
+                                            <span style={{
+                                                background: '#1a1000', color: '#fb923c',
+                                                border: '1px solid #f59e0b',
+                                                padding: '2px 8px', borderRadius: 8,
+                                                fontSize: 10, fontWeight: 'bold',
+                                                animation: 'pulse 1s infinite'
+                                            }}>🚛 HEAVY VEHICLE</span>
+                                        )}
                                     </div>
 
                                     <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center' }}>
@@ -1239,19 +1481,6 @@ function App() {
                 </div>
             </div>
 
-            {/* Live Distance Chart */}
-            <div style={{ background: 'linear-gradient(160deg,#1a2540,#111827)', borderRadius: 16, padding: 20, marginBottom: 22, border: '1px solid #1e3a5f' }}>
-                <h3 style={{ margin: '0 0 14px', color: '#94a3b8', fontSize: 14 }}>📈 Live Ultrasonic Distance — All Roads</h3>
-                <Line data={chartData} options={{
-                    responsive: true,
-                    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12 } } },
-                    scales: {
-                        y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e3a5f' }, title: { display: true, text: 'Distance (cm)', color: '#64748b' } },
-                        x: { ticks: { color: '#64748b' }, grid: { color: '#1e3a5f' } }
-                    }
-                }} />
-            </div>
-
             {/* Priority Table */}
             {decision?.priorities && (
                 <div style={{ background: 'linear-gradient(160deg,#1a2540,#111827)', borderRadius: 16, padding: 20, marginBottom: 22, border: '1px solid #1e3a5f' }}>
@@ -1325,229 +1554,175 @@ function App() {
                 </div>
             </div>
 
-            {/* ── ANALYTICS DASHBOARD ─────────────────────────────────── */}
+            {/* PHASE 8.4: TRAFFIC ANALYTICS — Clean version */}
             <div style={{ background: 'linear-gradient(160deg,#1a2540,#111827)', borderRadius: 16, padding: 20, marginTop: 22, border: '1px solid #1e3a5f' }}>
-                <h3 style={{ margin: '0 0 16px', color: '#94a3b8', fontSize: 15 }}>📊 Traffic Analytics — Real World Insights</h3>
+                <h3 style={{ margin: '0 0 6px', color: '#e2e8f0', fontSize: 16 }}>🗺️ Traffic Analytics — Nawinna Junction</h3>
+                <p style={{ color: '#475569', fontSize: 12, margin: '0 0 16px' }}>
+                    Live data to help road users choose the best time and route to travel.
+                </p>
 
                 {/* Tab Buttons */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
                     {[
-                        { id: 'congestion', label: '🔥 Congestion Score' },
-                        { id: 'peakhours', label: '⏰ Peak Hours' },
-                        { id: 'efficiency', label: '⚡ System Mode' },
-                        { id: 'waittimes', label: '⏳ Wait Times' }
+                        { id: 'livecongestion', label: '🚦 Live Road Status' },
+                        { id: 'besttimes',      label: '⏰ Best Times to Travel' },
+                        { id: 'roadhealth',     label: '🛣️ Road Performance' },
                     ].map(tab => (
                         <button key={tab.id} onClick={() => setAnalyticsTab(tab.id)}
                             style={{
                                 background: analyticsTab === tab.id ? '#1e3a5f' : '#0f172a',
                                 color: analyticsTab === tab.id ? '#60a5fa' : '#475569',
                                 border: `1px solid ${analyticsTab === tab.id ? '#3b82f6' : '#334155'}`,
-                                padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold'
+                                padding: '7px 16px', borderRadius: 8,
+                                cursor: 'pointer', fontSize: 12, fontWeight: 'bold'
                             }}>
                             {tab.label}
                         </button>
                     ))}
                 </div>
 
-                {/* TAB 1: Congestion Score per Road */}
-                {analyticsTab === 'congestion' && (
+                {/* TAB 1: Live Road Status */}
+                {analyticsTab === 'livecongestion' && (
                     <div>
-                        <p style={{ fontSize: 11, color: '#64748b', marginBottom: 12 }}>
-                            Congestion Score (0–100) based on ultrasonic distance + IR sensors + Google traffic + rain. Higher = more urgent.
+                        <p style={{ fontSize: 11, color: '#64748b', marginBottom: 14 }}>
+                            Current conditions at Nawinna Junction right now. Green = easy to pass, Red = heavy wait expected.
                         </p>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
-                            {analyticsData.roadPerf.length > 0 ? analyticsData.roadPerf.map(r => {
-                                const score = r.avgCongestion;
-                                const color = score > 70 ? '#ef4444' : score > 40 ? '#f59e0b' : '#22c55e';
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12 }}>
+                            {ROADS.map(road => {
+                                const dist   = sensorData[road] || 5000;
+                                const ir     = irData[road] || {};
+                                const google = googleTraffic[road] || 'Unknown';
+                                const heavy  = heavyVehicleActive[road];
+                                const espUp  = espOnline[road] !== false;
+
+                                let congestion = 'Low';
+                                let waitEst    = 'Under 1 min';
+                                let tip        = 'Good time to travel this road';
+                                let barColor   = '#22c55e';
+
+                                if (!espUp) {
+                                    congestion = 'Unknown';
+                                    waitEst    = 'Sensor offline';
+                                    tip        = 'No live data — proceed with caution';
+                                    barColor   = '#64748b';
+                                } else if (ir.queueLevel === 'Heavy' || google === 'Heavy') {
+                                    congestion = 'Heavy';
+                                    waitEst    = `${(greenTime[road] || 9) + yellowTime}–${(greenTime[road] || 9) * 2}s wait`;
+                                    tip        = 'Expect delays — consider alternate route';
+                                    barColor   = '#ef4444';
+                                } else if (ir.queueLevel === 'Light' || google === 'Medium') {
+                                    congestion = 'Moderate';
+                                    waitEst    = `${(greenTime[road] || 6)}–${(greenTime[road] || 6) + yellowTime}s wait`;
+                                    tip        = 'Some traffic — normal wait time';
+                                    barColor   = '#f59e0b';
+                                } else if (dist < 100) {
+                                    congestion = 'Moderate';
+                                    waitEst    = 'Short queue detected';
+                                    tip        = 'Light traffic — good to go';
+                                    barColor   = '#f59e0b';
+                                }
+
                                 return (
-                                    <div key={r.road} style={{ background: '#0f172a', borderRadius: 12, padding: 14, border: `1px solid ${color}44` }}>
-                                        <div style={{ fontWeight: 'bold', color: '#e2e8f0', marginBottom: 8 }}>{r.road} Road</div>
-                                        <div style={{ background: '#1e293b', borderRadius: 4, height: 10, marginBottom: 6 }}>
-                                            <div style={{ width: `${score}%`, background: color, height: '100%', borderRadius: 4, transition: 'width 1s' }} />
+                                    <div key={road} style={{ background: '#0f172a', borderRadius: 12, padding: 14, border: `2px solid ${barColor}44` }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                            <span style={{ fontWeight: 'bold', color: '#e2e8f0', fontSize: 14 }}>{road} Road</span>
+                                            <span style={{ background: `${barColor}22`, color: barColor, border: `1px solid ${barColor}`, padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 'bold' }}>{congestion}</span>
                                         </div>
-                                        <div style={{ fontSize: 22, fontWeight: 'bold', color, marginBottom: 8 }}>{score}/100</div>
-                                        <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.6 }}>
-                                            <div>🟢 Avg Green: {r.avgGreenTime}s</div>
-                                            <div>⏳ Avg Wait: {r.avgWaitTime}s</div>
-                                            <div>🏆 Priority Wins: {r.priorityWins}</div>
-                                            <div>🔴 Heavy IR Events: {r.heavyTrafficCount}</div>
-                                            <div>⚡ Efficiency: {r.efficiency}%</div>
+                                        {heavy && (
+                                            <div style={{ background: '#1a1000', color: '#fb923c', border: '1px solid #f59e0b', borderRadius: 6, padding: '3px 8px', fontSize: 10, marginBottom: 6, fontWeight: 'bold' }}>
+                                                🚛 Heavy vehicle in queue
+                                            </div>
+                                        )}
+                                        <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>⏳ Est. wait: <strong style={{ color: barColor }}>{waitEst}</strong></div>
+                                        <div style={{ fontSize: 11, color: '#64748b' }}>{tip}</div>
+                                        <div style={{ background: '#1e293b', borderRadius: 4, height: 6, marginTop: 8 }}>
+                                            <div style={{ width: congestion === 'Heavy' ? '85%' : congestion === 'Moderate' ? '50%' : congestion === 'Unknown' ? '30%' : '15%', background: barColor, height: '100%', borderRadius: 4, transition: 'width 1s' }} />
                                         </div>
                                     </div>
                                 );
-                            }) : (
-                                <div style={{ color: '#475569', fontSize: 12, padding: 20 }}>
-                                    Collecting data... Analytics appear after first traffic cycles complete.
+                            })}
+                        </div>
+
+                        {/* Weather advisory */}
+                        {rainDetected && (
+                            <div style={{ marginTop: 12, padding: 12, background: '#0f1f3d', border: '1px solid #3b82f6', borderRadius: 10 }}>
+                                <div style={{ color: '#60a5fa', fontWeight: 'bold', fontSize: 13 }}>🌧️ Rain Advisory</div>
+                                <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>
+                                    Rain detected at junction. Yellow light extended to {yellowTime}s for safety.
+                                    Allow extra braking distance. Reduce speed on approach.
                                 </div>
-                            )}
-                        </div>
-
-                        {/* Live Congestion from current sensors */}
-                        <div style={{ marginTop: 16, padding: 12, background: '#0f172a', borderRadius: 10, border: '1px solid #1e3a5f' }}>
-                            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>⚡ LIVE Congestion Right Now (from current sensor readings)</div>
-                            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                                {ROADS.map(road => {
-                                    const dist = sensorData[road] || 5000;
-                                    const ir = irData[road] || {};
-                                    const google = googleTraffic[road] || 'Unknown';
-                                    let liveScore = 0;
-                                    if (dist < 20) liveScore += 40;
-                                    else if (dist < 50) liveScore += 30;
-                                    else if (dist < 100) liveScore += 20;
-                                    else if (dist < 200) liveScore += 10;
-                                    if (ir.queueLevel === 'Heavy') liveScore += 35;
-                                    else if (ir.queueLevel === 'Light') liveScore += 15;
-                                    if (google === 'Light') liveScore += 20;
-                                    else if (google === 'Medium') liveScore += 12;
-                                    else if (google === 'Heavy') liveScore += 5;
-                                    if (rainDetected) liveScore += 5;
-                                    liveScore = Math.min(100, liveScore);
-                                    const c = liveScore > 70 ? '#ef4444' : liveScore > 40 ? '#f59e0b' : '#22c55e';
-                                    return (
-                                        <div key={road} style={{ flex: 1, minWidth: 100, background: '#1e293b', borderRadius: 8, padding: 10, border: `1px solid ${c}44`, textAlign: 'center' }}>
-                                            <div style={{ fontSize: 11, color: '#64748b' }}>{road}</div>
-                                            <div style={{ fontSize: 20, fontWeight: 'bold', color: c }}>{liveScore}</div>
-                                            <div style={{ fontSize: 9, color: '#475569' }}>/ 100</div>
-                                        </div>
-                                    );
-                                })}
                             </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* TAB 2: Peak Hours */}
-                {analyticsTab === 'peakhours' && (
-                    <div>
-                        <p style={{ fontSize: 11, color: '#64748b', marginBottom: 12 }}>
-                            Average congestion by hour of day (last 7 days). Helps identify morning/evening rush hours at Nawinna Junction.
-                        </p>
-                        {analyticsData.peakHours.length > 0 ? (
-                            <div style={{ overflowX: 'auto' }}>
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                                    <thead>
-                                        <tr style={{ borderBottom: '1px solid #1e3a5f' }}>
-                                            {['Hour', 'North', 'South', 'East', 'West', 'Peak?'].map(h => (
-                                                <th key={h} style={{ padding: '8px 10px', color: '#475569', textAlign: 'left' }}>{h}</th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {analyticsData.peakHours.filter(h => h.North > 0 || h.South > 0 || h.East > 0 || h.West > 0).map(h => {
-                                            const maxScore = Math.max(h.North, h.South, h.East, h.West);
-                                            const isPeak = maxScore > 60;
-                                            return (
-                                                <tr key={h.hour} style={{ borderBottom: '1px solid #0f172a', background: isPeak ? 'rgba(239,68,68,0.05)' : 'transparent' }}>
-                                                    <td style={{ padding: '6px 10px', color: '#94a3b8', fontWeight: 'bold' }}>
-                                                        {h.hour.toString().padStart(2,'0')}:00
-                                                    </td>
-                                                    {['North','South','East','West'].map(road => {
-                                                        const s = h[road] || 0;
-                                                        const c = s > 60 ? '#ef4444' : s > 30 ? '#f59e0b' : '#22c55e';
-                                                        return (
-                                                            <td key={road} style={{ padding: '6px 10px' }}>
-                                                                <span style={{ color: c, fontWeight: 'bold' }}>{s}</span>
-                                                                <div style={{ background: '#1e293b', borderRadius: 2, height: 4, marginTop: 3, width: 60 }}>
-                                                                    <div style={{ width: `${s}%`, background: c, height: '100%', borderRadius: 2 }} />
-                                                                </div>
-                                                            </td>
-                                                        );
-                                                    })}
-                                                    <td style={{ padding: '6px 10px', color: isPeak ? '#f87171' : '#4ade80', fontWeight: 'bold', fontSize: 10 }}>
-                                                        {isPeak ? '🔴 PEAK' : '✅ Normal'}
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                                {analyticsData.peakHours.filter(h => h.North > 0 || h.South > 0 || h.East > 0 || h.West > 0).length === 0 && (
-                                    <div style={{ color: '#475569', fontSize: 12, padding: 20 }}>No peak hour data yet — system needs to run for a few cycles first.</div>
-                                )}
-                            </div>
-                        ) : (
-                            <div style={{ color: '#475569', fontSize: 12, padding: 20 }}>Collecting peak hour data... Check back after the system runs for a while.</div>
                         )}
                     </div>
                 )}
 
-                {/* TAB 3: System Mode Efficiency */}
-                {analyticsTab === 'efficiency' && (
+                {/* TAB 2: Best Times to Travel */}
+                {analyticsTab === 'besttimes' && (
                     <div>
-                        <p style={{ fontSize: 11, color: '#64748b', marginBottom: 12 }}>
-                            Shows how often the system uses each data source. BOTH mode (sensors + Google) is most accurate.
+                        <p style={{ fontSize: 11, color: '#64748b', marginBottom: 14 }}>
+                            Based on the last 7 days of traffic data. Shows the least congested hours at this junction.
                         </p>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12, marginBottom: 16 }}>
-                            {[
-                                { label: 'Total Cycles (24h)', value: analyticsData.efficiency.totalCycles24h, icon: '🔄', color: '#60a5fa' },
-                                { label: 'Avg Congestion (1h)', value: `${Math.round(analyticsData.efficiency.last1Hour?.avgCongestion || 0)}/100`, icon: '📊', color: '#f59e0b' },
-                                { label: 'Avg Green Time (1h)', value: `${Math.round((analyticsData.efficiency.last1Hour?.avgGreenTime || 3) * 10) / 10}s`, icon: '🟢', color: '#22c55e' },
-                                { label: 'Recent Cycles (1h)', value: analyticsData.efficiency.last1Hour?.totalCycles || 0, icon: '⏱️', color: '#a78bfa' }
-                            ].map(stat => (
-                                <div key={stat.label} style={{ background: '#0f172a', borderRadius: 10, padding: 14, border: `1px solid ${stat.color}33` }}>
-                                    <div style={{ fontSize: 10, color: '#64748b', marginBottom: 6 }}>{stat.icon} {stat.label}</div>
-                                    <div style={{ fontSize: 20, fontWeight: 'bold', color: stat.color }}>{stat.value}</div>
+                        {analyticsData.peakHours.filter(h => h.North > 0 || h.South > 0 || h.East > 0 || h.West > 0).length > 0 ? (
+                            <div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
+                                    {analyticsData.peakHours.filter(h =>
+                                        h.North > 0 || h.South > 0 || h.East > 0 || h.West > 0
+                                    ).map(h => {
+                                        const avg = Math.round((h.North + h.South + h.East + h.West) / 4);
+                                        const color = avg > 60 ? '#ef4444' : avg > 30 ? '#f59e0b' : '#22c55e';
+                                        const label = avg > 60 ? 'Peak — avoid' : avg > 30 ? 'Moderate' : '✅ Good time';
+                                        return (
+                                            <div key={h.hour} style={{ background: '#0f172a', borderRadius: 8, padding: 10, border: `1px solid ${color}33`, textAlign: 'center' }}>
+                                                <div style={{ fontSize: 14, fontWeight: 'bold', color: '#e2e8f0' }}>
+                                                    {h.hour.toString().padStart(2,'0')}:00
+                                                </div>
+                                                <div style={{ fontSize: 11, color, fontWeight: 'bold', marginTop: 3 }}>{label}</div>
+                                                <div style={{ background: '#1e293b', borderRadius: 3, height: 5, marginTop: 5 }}>
+                                                    <div style={{ width: `${avg}%`, background: color, height: '100%', borderRadius: 3 }} />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
-                            ))}
-                        </div>
-
-                        {/* Mode breakdown */}
-                        <div style={{ background: '#0f172a', borderRadius: 10, padding: 14, border: '1px solid #1e3a5f' }}>
-                            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 12, fontWeight: 'bold' }}>Decision Mode Breakdown (Last 24h)</div>
-                            {analyticsData.efficiency.modeBreakdown.length > 0 ? analyticsData.efficiency.modeBreakdown.map(m => {
-                                const modeColors = { BOTH: '#22c55e', SENSOR_ONLY: '#60a5fa', GOOGLE_ONLY: '#a78bfa', FALLBACK: '#f59e0b' };
-                                const c = modeColors[m.mode] || '#64748b';
-                                const modeDesc = {
-                                    BOTH: 'Using sensors + Google Maps (most accurate)',
-                                    SENSOR_ONLY: 'Sensors only — Google API unavailable',
-                                    GOOGLE_ONLY: 'Google only — sensors offline',
-                                    FALLBACK: 'Fixed timing — all data unavailable'
-                                };
-                                return (
-                                    <div key={m.mode} style={{ marginBottom: 12 }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                                            <span style={{ color: c, fontWeight: 'bold', fontSize: 12 }}>{m.mode}</span>
-                                            <span style={{ color: '#94a3b8', fontSize: 11 }}>{m.percentage}% ({m.count} cycles)</span>
-                                        </div>
-                                        <div style={{ background: '#1e293b', borderRadius: 4, height: 8 }}>
-                                            <div style={{ width: `${m.percentage}%`, background: c, height: '100%', borderRadius: 4, transition: 'width 1s' }} />
-                                        </div>
-                                        <div style={{ fontSize: 10, color: '#475569', marginTop: 3 }}>{modeDesc[m.mode]}</div>
-                                    </div>
-                                );
-                            }) : (
-                                <div style={{ color: '#475569', fontSize: 12 }}>Collecting mode data... Appears after first few cycles.</div>
-                            )}
-                        </div>
+                                <div style={{ marginTop: 12, padding: 10, background: '#0f172a', borderRadius: 8, fontSize: 11, color: '#64748b' }}>
+                                    💡 <strong style={{ color: '#94a3b8' }}>Tip:</strong> Green hours are the best times to use Nawinna Junction. Red hours expect heavy delays.
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ color: '#475569', fontSize: 12, padding: 20, textAlign: 'center' }}>
+                                📊 Collecting historical data... Check back after the system has run for a few hours.
+                            </div>
+                        )}
                     </div>
                 )}
 
-                {/* TAB 4: Wait Times */}
-                {analyticsTab === 'waittimes' && (
+                {/* TAB 3: Road Performance */}
+                {analyticsTab === 'roadhealth' && (
                     <div>
-                        <p style={{ fontSize: 11, color: '#64748b', marginBottom: 12 }}>
-                            Average wait time per road (time other roads wait while one road has green). Lower is better.
+                        <p style={{ fontSize: 11, color: '#64748b', marginBottom: 14 }}>
+                            Which road gets the most green light priority and how long you typically wait.
                         </p>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
                             {analyticsData.roadPerf.length > 0 ? analyticsData.roadPerf.map(r => {
-                                const wait = r.avgWaitTime;
+                                const wait  = r.avgWaitTime;
                                 const color = wait > 30 ? '#ef4444' : wait > 15 ? '#f59e0b' : '#22c55e';
                                 return (
                                     <div key={r.road} style={{ background: '#0f172a', borderRadius: 12, padding: 14, border: `1px solid ${color}44` }}>
-                                        <div style={{ fontWeight: 'bold', color: '#e2e8f0', marginBottom: 8 }}>{r.road} Road</div>
-                                        <div style={{ fontSize: 28, fontWeight: 'bold', color, marginBottom: 4 }}>{wait}s</div>
-                                        <div style={{ fontSize: 10, color: '#64748b' }}>average wait per cycle</div>
-                                        <div style={{ marginTop: 10, fontSize: 11, color: '#475569', lineHeight: 1.8 }}>
-                                            <div>Total cycles: {r.totalCycles}</div>
-                                            <div>Rain cycles: {r.rainCycles}</div>
-                                            <div style={{ color: wait > 30 ? '#ef4444' : '#4ade80', fontWeight: 'bold' }}>
-                                                {wait > 30 ? '⚠️ High wait — consider priority adjustment' : wait > 15 ? '⚡ Moderate — normal operation' : '✅ Low wait — good throughput'}
-                                            </div>
+                                        <div style={{ fontWeight: 'bold', color: '#e2e8f0', marginBottom: 10, fontSize: 14 }}>{r.road} Road</div>
+                                        <div style={{ fontSize: 12, color: '#64748b', lineHeight: 2 }}>
+                                            <div>⏳ Avg wait time: <strong style={{ color }}>{wait}s</strong></div>
+                                            <div>🟢 Avg green time: <strong style={{ color: '#22c55e' }}>{r.avgGreenTime}s</strong></div>
+                                            <div>🏆 Priority wins: <strong style={{ color: '#60a5fa' }}>{r.priorityWins}</strong></div>
+                                            <div>🔴 Heavy traffic events: {r.heavyTrafficCount}</div>
+                                            <div>⚡ Gets green when needed: <strong style={{ color: '#a78bfa' }}>{r.efficiency}%</strong></div>
+                                        </div>
+                                        <div style={{ marginTop: 8, fontSize: 11, color: wait > 30 ? '#ef4444' : wait > 15 ? '#f59e0b' : '#4ade80', fontWeight: 'bold' }}>
+                                            {wait > 30 ? '⚠️ Long waits on this road' : wait > 15 ? '⚡ Moderate — normal operation' : '✅ Short waits — good flow'}
                                         </div>
                                     </div>
                                 );
                             }) : (
-                                <div style={{ color: '#475569', fontSize: 12, padding: 20 }}>Collecting wait time data...</div>
+                                <div style={{ color: '#475569', fontSize: 12, padding: 20 }}>Collecting road performance data...</div>
                             )}
                         </div>
                     </div>
