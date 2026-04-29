@@ -1526,7 +1526,7 @@ function App() {
                                 {/* Right column: MAIN traffic light (vertical) + PEDESTRIAN signal (vertical) */}
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
                                     
-                                    {/* MAIN TRAFFIC LIGHT (3 colours) */}
+                                    {/* MAIN TRAFFIC LIGHT (3 colours)
                                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                                         <div style={{ fontSize: 9, color: '#64748b', letterSpacing: 1 }}>MAIN</div>
                                         <div style={{ background: '#111', padding: '10px 8px', borderRadius: 12, border: '2px solid #2a2a2a', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1541,7 +1541,7 @@ function App() {
                                                 {count}s
                                             </div>
                                         )}
-                                    </div>
+                                    </div> */}
 
                                     {/* PEDESTRIAN SIGNAL (RED/GREEN only) */}
                                     <PedestrianSignalWidget
