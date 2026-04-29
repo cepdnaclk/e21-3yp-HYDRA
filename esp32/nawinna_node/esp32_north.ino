@@ -811,8 +811,8 @@
 const char* ROAD_ID = "North";
 
 // ── WIFI CREDENTIALS ─────────────────────────────────────────────────────────
-const char* WIFI_SSID   = "SLT-4G_166D59";
-const char* WIFI_PASS   = "F58EA0CF";
+const char* WIFI_SSID   = "Dialog 4G 940";
+const char* WIFI_PASS   = "Robbin123@hood";
 
 // ── MQTT (AWS CLOUD SERVER) ───────────────────────────────────────────────────
 const char* MQTT_SERVER = "56.228.30.50";
@@ -919,16 +919,16 @@ const int SEG_PINS[7] = { SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F, SEG_G };
 // Segment patterns for digits 0–9
 // Bit order: A B C D E F G
 const byte DIGIT_PATTERNS[10] = {
-    0b1111110, // 0: A B C D E F
-    0b0110000, // 1: B C
-    0b1101101, // 2: A B D E G
-    0b1111001, // 3: A B C D G
-    0b0110011, // 4: B C F G
-    0b1011011, // 5: A C D F G
-    0b1011111, // 6: A C D E F G
-    0b1110000, // 7: A B C
-    0b1111111, // 8: all
-    0b1111011  // 9: A B C D F G
+    0b0000001, // 0: A B C D E F
+    0b1001111, // 1: B C
+    0b0010010, // 2: A B D E G
+    0b0000110, // 3: A B C D G
+    0b1001100, // 4: B C F G
+    0b0100100, // 5: A C D F G
+    0b0100000, // 6: A C D E F G
+    0b0001111, // 7: A B C
+    0b0000000, // 8: all
+    0b0000100  // 9: A B C D F G
 };
 
 void clearDisplay() {

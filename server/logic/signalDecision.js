@@ -575,6 +575,7 @@ function makeSignalDecision(
         priorities = ROADS.map(road => {
             // Skip downed ESP32 lanes from winning — they get synthetic timing
             const espOnline = esp[road] !== false;
+            const sensorIsWorking = sensorWorking[road] === true;
 
             const rawDist   = sensorData[road];
             const distanceCm = (rawDist === undefined || rawDist === null || rawDist >= SENSOR_MAX_RANGE)
@@ -585,7 +586,13 @@ function makeSignalDecision(
             const piezoHeavy = piezo[road] || false;
             const pedRoad    = ped[road]   || { requested: false, crossing: false };
 
-            const sensorScenario = selectSensorMode(distanceCm);
+            // Determine sensor scenario: if this road's sensor is not working, use FALLBACK
+            let sensorScenario;
+            if (!sensorIsWorking) {
+                sensorScenario = googleWorking ? 'GOOGLE_ONLY' : 'FALLBACK';
+            } else {
+                sensorScenario = selectSensorMode(distanceCm);
+            }
 
             let score, greenTime;
 
@@ -599,6 +606,10 @@ function makeSignalDecision(
                 greenTime = calculateGreenTimeIR(
                                 irRoad.ir1Blocked, irRoad.ir2Blocked, piezoHeavy
                             );
+            } else if (sensorScenario === 'GOOGLE_ONLY' || sensorScenario === 'FALLBACK') {
+                // No sensor data for this road - use Google Traffic or fallback timing
+                score     = calculateScoreUltrasonic(null, google);
+                greenTime = sensorScenario === 'FALLBACK' ? FALLBACK_GREEN : calculateGreenTimeUltrasonic(null, google);
             } else {
                 // Ultrasonic mode: shorter distance = higher score, max < 1000
                 score     = calculateScoreUltrasonic(distanceCm, google);
