@@ -810,8 +810,8 @@ let redTime = 3; // Will be updated each cycle dynamically
 
 // PHASE 2.1: ESP32 health tracking — 20 minute timeout
 const ESP32_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
-let espLastSeen = { North: 0, South: 0, East: 0, West: 0 };
-let espOnline   = { North: false, South: false, East: false, West: false };
+let espLastSeen = { North: Date.now(), South: Date.now(), East: Date.now(), West: Date.now() };
+let espOnline   = { North: true, South: true, East: true, West: true };
 
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 3: MQTT BROKER SETUP
