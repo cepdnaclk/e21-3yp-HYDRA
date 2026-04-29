@@ -17,6 +17,7 @@
 // // NEXT INTERSECTION FOR GOOGLE TRAFFIC:
 // //   North road leads to → Clocktower Junction, Kurunegala
 // //
+
 // // LOGIC:
 // //   - Sends all sensor data to AWS cloud server via MQTT
 // //   - Rain sensor data broadcast to ALL roads via topic traffic/rain/all
