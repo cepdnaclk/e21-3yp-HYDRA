@@ -550,8 +550,8 @@
 const char* ROAD_ID = "South";
 
 // ── WIFI CREDENTIALS ─────────────────────────────────────────────────────────
-const char* WIFI_SSID   = "SLT-4G_166D59";
-const char* WIFI_PASS   = "F58EA0CF";
+const char* WIFI_SSID   = "Dialog 4G 940";
+const char* WIFI_PASS   = "Robbin123@hood";
 
 // ── MQTT (AWS CLOUD SERVER) ───────────────────────────────────────────────────
 const char* MQTT_SERVER = "56.228.30.50";
