@@ -315,6 +315,34 @@ function calculateGreenTimeUltrasonic(distanceCm, googleTraffic) {
     return Math.round(Math.min(Math.max(greenTime, MIN_GREEN_ULTRASONIC), MAX_GREEN_ULTRASONIC));
 }
 
+function classifyQueueByUltrasonic(distanceCm) {
+    if (distanceCm === null || distanceCm === undefined || distanceCm >= SENSOR_MAX_RANGE) return 'None';
+    if (distanceCm <= 100) return 'Heavy';
+    if (distanceCm <= 300) return 'Light';
+    return 'None';
+}
+
+function calculateScoreUltrasonicWithQueue(distanceCm, queueLevel, piezoHeavy) {
+    let score = calculateScoreUltrasonic(distanceCm);
+    if (queueLevel === 'Light') score += 50;
+    if (queueLevel === 'Heavy') score += 120;
+    if (piezoHeavy) score += 150;
+    return score;
+}
+
+function calculateGreenTimeUltrasonicWithQueue(distanceCm, queueLevel, piezoHeavy, googleTraffic) {
+    let greenTime = calculateGreenTimeUltrasonic(distanceCm, googleTraffic);
+    if (queueLevel === 'Heavy') {
+        greenTime += HEAVY_TRAFFIC_BONUS;
+    } else if (queueLevel === 'Light') {
+        greenTime += LIGHT_TRAFFIC_BONUS;
+    }
+    if (piezoHeavy) {
+        greenTime += PIEZO_BONUS;
+    }
+    return Math.round(Math.min(Math.max(greenTime, MIN_GREEN_ULTRASONIC), MAX_GREEN_ULTRASONIC));
+}
+
 // ── IR mode: score starts at IR_SCORE_BASE — always beats ultrasonic ──────
 //
 // piezoHeavy: boolean derived from piezoData[road].heavy
@@ -386,13 +414,13 @@ function determineSystemMode(sensorWorking, googleWorking) {
 //
 function makeSignalDecision(
     sensorData, trafficData, sensorWorking, googleWorking,
-    irData, piezoData, rainDetected, pedStatus, espStatus
+    queueData, piezoData, rainDetected, pedStatus, espStatus
 ) {
     const ROADS      = ['North', 'South', 'East', 'West'];
     const systemMode = determineSystemMode(sensorWorking || {}, googleWorking || false);
     const currentYellowTime = rainDetected ? YELLOW_TIME_RAIN : YELLOW_TIME_DRY;
 
-    const ir    = irData    || {};
+    const queue = queueData || {};
     const piezo = piezoData || {};
     const ped   = pedStatus || {};
     const esp   = espStatus || {};
@@ -404,7 +432,8 @@ function makeSignalDecision(
             road,
             sensorScenario: 'NO_DATA',
             distance: null,
-            ir1Blocked: false, ir2Blocked: false, piezoHeavy: false,
+            queueLevel: 'None',
+            piezoHeavy: false,
             traffic: 'Unknown',
             score: ROADS.length - i,
             greenTime: FALLBACK_GREEN,
@@ -422,7 +451,8 @@ function makeSignalDecision(
                 road,
                 sensorScenario: 'GOOGLE_ONLY',
                 distance: null,
-                ir1Blocked: false, ir2Blocked: false, piezoHeavy: false,
+                queueLevel: 'None',
+                piezoHeavy: false,
                 traffic: google, score, greenTime: green,
                 yellowTime: currentYellowTime,
                 mode: 'GOOGLE_ONLY',
@@ -439,16 +469,11 @@ function makeSignalDecision(
             const distanceCm = (rawDist === undefined || rawDist === null || rawDist >= SENSOR_MAX_RANGE)
                                 ? null : rawDist;
 
-            const google  = (trafficData || {})[road] || 'Unknown';
-            const irRoad  = ir[road] || { ir1Blocked: false, ir2Blocked: false };
+            const google     = (trafficData || {})[road] || 'Unknown';
+            const queueLevel = (queue[road] || {}).queueLevel || 'None';
 
-            // ── Extract piezoHeavy from structured piezoData object ────────
-            // piezoData[road] is { heavy: bool, timestamp: number, locked: bool }
-            // heavy=true only when IR is also blocked (enforced at MQTT handler)
-            // We trust the server's locked+IR enforcement, but double-check IR here
             const piezoRoad  = piezo[road] || { heavy: false, timestamp: 0, locked: false };
-            const piezoHeavy = (piezoRoad.heavy === true) &&
-                               (irRoad.ir1Blocked || irRoad.ir2Blocked); // belt-and-braces
+            const piezoHeavy = (piezoRoad.heavy === true) && distanceCm !== null;
 
             const pedRoad = ped[road] || { requested: false, crossing: false };
 
@@ -465,21 +490,9 @@ function makeSignalDecision(
                     greenTime      = FALLBACK_GREEN;
                 }
             } else {
-                sensorScenario = selectSensorMode(distanceCm);
-
-                if (sensorScenario === 'IR') {
-                    score     = calculateScoreIR(
-                                    irRoad.ir1Blocked, irRoad.ir2Blocked,
-                                    piezoHeavy,
-                                    systemMode === 'BOTH' ? google : 'Unknown'
-                                );
-                    greenTime = calculateGreenTimeIR(
-                                    irRoad.ir1Blocked, irRoad.ir2Blocked, piezoHeavy
-                                );
-                } else {
-                    score     = calculateScoreUltrasonic(distanceCm, google);
-                    greenTime = calculateGreenTimeUltrasonic(distanceCm, google);
-                }
+                sensorScenario = 'ULTRASONIC';
+                score          = calculateScoreUltrasonicWithQueue(distanceCm, queueLevel, piezoHeavy);
+                greenTime      = calculateGreenTimeUltrasonicWithQueue(distanceCm, queueLevel, piezoHeavy, google);
             }
 
             // Downed ESP32: exclude from winning
@@ -498,8 +511,7 @@ function makeSignalDecision(
             return {
                 road, sensorScenario,
                 distance:   espOnline && sensorIsWorking ? distanceCm : null,
-                ir1Blocked: espOnline ? (irRoad.ir1Blocked  || false) : false,
-                ir2Blocked: espOnline ? (irRoad.ir2Blocked  || false) : false,
+                queueLevel: espOnline && sensorIsWorking ? queueLevel : 'None',
                 piezoHeavy: espOnline ? piezoHeavy          : false,
                 // Expose piezo timestamp so dashboard can show "tap X minutes ago" if desired
                 piezoTimestamp: piezoRoad.timestamp || 0,
@@ -538,14 +550,14 @@ function makeSignalDecision(
 }
 
 module.exports = {
-    makeSignalDecision, selectSensorMode,
-    calculateGreenTimeUltrasonic, calculateGreenTimeIR,
-    calculateScoreUltrasonic, calculateScoreIR,
+    makeSignalDecision,
+    calculateGreenTimeUltrasonic,
+    calculateScoreUltrasonic,
     determineSystemMode,
     // Constants — exported for tests and dashboard display
-    IR_MODE_THRESHOLD, BASE_GREEN_TIME,
+    BASE_GREEN_TIME,
     LIGHT_TRAFFIC_BONUS, HEAVY_TRAFFIC_BONUS, PIEZO_BONUS,
     YELLOW_TIME_DRY, YELLOW_TIME_RAIN,
     MIN_GREEN_ULTRASONIC, MAX_GREEN_ULTRASONIC,
-    IR_SCORE_BASE, SENSOR_MAX_RANGE
+    SENSOR_MAX_RANGE
 };

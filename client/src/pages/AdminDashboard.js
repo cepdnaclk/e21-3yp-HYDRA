@@ -1,10 +1,13 @@
-// client/src/pages/AdminDashboard.js — HYDRA Dashboard v7.0 — Piezo Persistence Fix
-// PIEZO CHANGES:
-//   - piezoData[road] is now a structured object { heavy, timestamp, locked }
-//     (previously it was a plain boolean)
-//   - heavyHere reads piezoData[road]?.heavy === true (not piezoData[road])
-//   - Badge shows from first tap moment → through entire extended green → clears when server sends heavy=false
-//   - Priority table "Piezo" column also reads .heavy
+// client/src/pages/AdminDashboard.js — HYDRA Dashboard v8.0 — Ultrasonic Version
+// ADMIN VERSION with Traffic Police Override
+// CHANGES:
+//   - Removed all IR sensor references
+//   - Added dual ultrasonic sensor display (US1 + US2)
+//   - Shows stability status for both sensors
+//   - Traffic level based on stable ultrasonic readings
+//   - Green time logic: Light (+3s) = US1 stable, Heavy (+6s) = US1+US2 stable
+//   - Piezo persists through extended green cycle
+
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import axios from 'axios';
@@ -69,12 +72,10 @@ const TrafficBadge = ({ level }) => {
 
 const ScenarioBadge = ({ scenario }) => {
     const map = {
-        IR:          { bg: '#3b1f69', color: '#c084fc', border: '#a855f7', icon: '🔦', label: 'IR MODE' },
         ULTRASONIC:  { bg: '#1e3a5f', color: '#60a5fa', border: '#3b82f6', icon: '📡', label: 'ULTRASONIC' },
         GOOGLE_ONLY: { bg: '#1e293b', color: '#94a3b8', border: '#475569', icon: '🗺️', label: 'GOOGLE ONLY' },
         FALLBACK:    { bg: '#3d2000', color: '#fb923c', border: '#f59e0b', icon: '⚠️', label: 'FALLBACK' },
         NO_DATA:     { bg: '#1e1e1e', color: '#6b7280', border: '#374151', icon: '❌', label: 'NO SENSOR' },
-        NO_SENSOR:   { bg: '#1e1e1e', color: '#6b7280', border: '#374151', icon: '❌', label: 'NO SENSOR' },
     };
     const s = map[scenario] || map.FALLBACK;
     return (
@@ -88,9 +89,9 @@ const ScenarioBadge = ({ scenario }) => {
 
 const TrafficDensityBadge = ({ density }) => {
     const map = {
-        'Heavy':   { bg: '#7f1d1d', color: '#f87171', icon: '🔴', label: 'HEAVY (+6s Green)' },
-        'Light':   { bg: '#713f12', color: '#fde047', icon: '🟡', label: 'LIGHT (+3s Green)' },
-        'None':    { bg: '#14532d', color: '#4ade80', icon: '🟢', label: 'NO TRAFFIC (3s base)' },
+        'Heavy':   { bg: '#7f1d1d', color: '#f87171', icon: '🔴', label: 'HEAVY QUEUE (+6s Green)' },
+        'Light':   { bg: '#713f12', color: '#fde047', icon: '🟡', label: 'LIGHT QUEUE (+3s Green)' },
+        'None':    { bg: '#14532d', color: '#4ade80', icon: '🟢', label: 'NO QUEUE (3s base)' },
         'Unknown': { bg: '#1e293b', color: '#64748b', icon: '❓', label: 'UNKNOWN' },
     };
     const s = map[density] || map.Unknown;
@@ -191,32 +192,26 @@ const PedestrianSignalWidget = ({ ped, mainPhase, mainCountdown, yellowTime }) =
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MAIN ADMIN DASHBOARD
+// MAIN ADMIN DASHBOARD (Ultrasonic Version)
 // ─────────────────────────────────────────────────────────────────────────────
 export default function AdminDashboard({ user, onLogout }) {
     const [livePhase,           setLivePhase]           = useState({ North:'RED', South:'RED', East:'RED', West:'RED' });
     const [liveCountdown,       setLiveCountdown]       = useState({ North:0, South:0, East:0, West:0 });
-    const [sensorData,          setSensorData]          = useState({ North:5000, South:5000, East:5000, West:5000 });
+    const [ultrasonicData,      setUltrasonicData]      = useState({
+        North: { us1DistanceCm: 5000, us2DistanceCm: 5000, us1Blocked: false, us2Blocked: false, us1Stable: false, us2Stable: false, trafficLevel: 'None' },
+        South: { us1DistanceCm: 5000, us2DistanceCm: 5000, us1Blocked: false, us2Blocked: false, us1Stable: false, us2Stable: false, trafficLevel: 'None' },
+        East:  { us1DistanceCm: 5000, us2DistanceCm: 5000, us1Blocked: false, us2Blocked: false, us1Stable: false, us2Stable: false, trafficLevel: 'None' },
+        West:  { us1DistanceCm: 5000, us2DistanceCm: 5000, us1Blocked: false, us2Blocked: false, us1Stable: false, us2Stable: false, trafficLevel: 'None' }
+    });
     const [googleTraffic,       setGoogleTraffic]       = useState({ North:'Unknown', South:'Unknown', East:'Unknown', West:'Unknown' });
     const [sensorWorking,       setSensorWorking]       = useState({});
     const [googleWorking,       setGoogleWorking]       = useState(false);
-    const [irData,              setIrData]              = useState({
-        North: { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' },
-        South: { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' },
-        East:  { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' },
-        West:  { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' }
-    });
-
-    // ── piezoData: structured objects { heavy, timestamp, locked } per road ──
-    // heavy=true → show badge; heavy=false → hide badge
-    // The server controls the lifecycle; the dashboard just reads it.
     const [piezoData, setPiezoData] = useState({
         North: { heavy: false, timestamp: 0, locked: false },
         South: { heavy: false, timestamp: 0, locked: false },
         East:  { heavy: false, timestamp: 0, locked: false },
         West:  { heavy: false, timestamp: 0, locked: false }
     });
-
     const [rainDetected,        setRainDetected]        = useState(false);
     const [yellowTime,          setYellowTime]          = useState(3);
     const [redTime,             setRedTime]             = useState(0);
@@ -226,7 +221,6 @@ export default function AdminDashboard({ user, onLogout }) {
     const [connected,           setConnected]           = useState(false);
     const [notification,        setNotification]        = useState(null);
     const [espOnline,           setEspOnline]           = useState({ North: true, South: true, East: true, West: true });
-    const [heavyVehicleActive,  setHeavyVehicleActive]  = useState({ North: false, South: false, East: false, West: false });
     const [analyticsTab,        setAnalyticsTab]        = useState('livecongestion');
     const [analyticsData,       setAnalyticsData]       = useState({
         peakHours: [], roadPerf: [],
@@ -250,13 +244,11 @@ export default function AdminDashboard({ user, onLogout }) {
         socket.on('fullState', data => {
             if (data.livePhase)       setLivePhase(data.livePhase);
             if (data.liveCountdown)   setLiveCountdown(data.liveCountdown);
-            if (data.sensorData)      setSensorData(data.sensorData);
+            if (data.ultrasonicData)  setUltrasonicData(data.ultrasonicData);
             if (data.googleTraffic)   setGoogleTraffic(data.googleTraffic);
             if (data.latestDecision)  setDecision(data.latestDecision);
             if (data.sensorWorking)   setSensorWorking(data.sensorWorking);
             if (data.googleWorking !== undefined) setGoogleWorking(data.googleWorking);
-            if (data.irData)          setIrData(data.irData);
-            // piezoData arrives as structured objects — set directly
             if (data.piezoData)       setPiezoData(data.piezoData);
             if (data.rainDetected !== undefined) {
                 setRainDetected(data.rainDetected);
@@ -266,7 +258,6 @@ export default function AdminDashboard({ user, onLogout }) {
             if (data.greenTime)              setGreenTime(data.greenTime);
             if (data.pedStatus)              setPedStatus(data.pedStatus);
             if (data.espOnline)              setEspOnline(data.espOnline);
-            if (data.heavyVehicleActive)     setHeavyVehicleActive(data.heavyVehicleActive);
         });
 
         socket.on('countdown',      ({ road, phase, remaining }) => {
@@ -275,31 +266,18 @@ export default function AdminDashboard({ user, onLogout }) {
         });
         socket.on('ledStateUpdate', ({ road, state }) => setLivePhase(p => ({ ...p, [road]: state })));
         socket.on('newDecision',    dec => setDecision(dec));
-        socket.on('sensorUpdate',   ({ road, distanceCm }) => setSensorData(p => ({ ...p, [road]: distanceCm })));
-        socket.on('irUpdate',       ({ road, ir1Blocked, ir2Blocked, queueLevel }) => {
-            setIrData(prev => ({ ...prev, [road]: { ir1Blocked, ir2Blocked, queueLevel: queueLevel || 'None' } }));
+        socket.on('ultrasonicUpdate', ({ road, us1DistanceCm, us2DistanceCm, us1Blocked, us2Blocked, us1Stable, us2Stable, trafficLevel }) => {
+            setUltrasonicData(prev => ({
+                ...prev,
+                [road]: { us1DistanceCm, us2DistanceCm, us1Blocked, us2Blocked, us1Stable, us2Stable, trafficLevel: trafficLevel || 'None' }
+            }));
         });
-
-        // ── piezoUpdate: server sends { road, heavyVehicle: bool, rawValue } ──
-        // We mirror this into the structured piezoData state.
-        // The server manages the full object; here we only get the summary boolean.
-        // We update heavy+locked to match. Timestamp is managed server-side.
-        socket.on('piezoUpdate', ({ road, heavyVehicle, rawValue }) => {
+        socket.on('piezoUpdate', ({ road, heavyVehicle }) => {
             setPiezoData(prev => ({
                 ...prev,
-                [road]: {
-                    ...prev[road],
-                    heavy:  heavyVehicle,
-                    locked: heavyVehicle // locked when active
-                }
+                [road]: { ...prev[road], heavy: heavyVehicle, locked: heavyVehicle }
             }));
-            if (heavyVehicle) {
-                setHeavyVehicleActive(prev => ({ ...prev, [road]: true }));
-            } else {
-                setHeavyVehicleActive(prev => ({ ...prev, [road]: false }));
-            }
         });
-
         socket.on('rainUpdate',           ({ rainDetected: r }) => {
             setRainDetected(r);
             setYellowTime(r ? 5 : 3);
@@ -310,7 +288,6 @@ export default function AdminDashboard({ user, onLogout }) {
             setGoogleWorking(gw);
         });
         socket.on('espStatusUpdate',      ({ road, online }) => setEspOnline(prev => ({ ...prev, [road]: online })));
-        socket.on('heavyVehicleUpdate',   ({ road, active }) => setHeavyVehicleActive(prev => ({ ...prev, [road]: active })));
         socket.on('analyticsUpdate',      (data) => {
             setAnalyticsData({
                 peakHours:  data.peakHours  || [],
@@ -401,7 +378,7 @@ export default function AdminDashboard({ user, onLogout }) {
                         border: `1px solid ${rainDetected ? '#3b82f6' : '#22c55e'}`,
                         padding: '3px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold'
                     }}>
-                        {rainDetected ? `🌧️ RAIN — Yellow: ${yellowTime}s (3s+2s)` : `☀️ DRY — Yellow: ${yellowTime}s`}
+                        {rainDetected ? `🌧️ RAIN — Yellow: ${yellowTime}s` : `☀️ DRY — Yellow: ${yellowTime}s`}
                     </span>
                     <span style={{ background: '#1e293b', color: '#94a3b8', padding: '3px 12px', borderRadius: 20, fontSize: 12 }}>
                         📡 Sensors: {activeSensors}/4
@@ -448,43 +425,36 @@ export default function AdminDashboard({ user, onLogout }) {
                 </div>
             )}
 
-            {/* ── ROAD CARDS ── */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(400px,1fr))', gap: 16, marginBottom: 22 }}>
+            {/* ── ROAD CARDS (Ultrasonic Version - No IR) ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(450px,1fr))', gap: 16, marginBottom: 22 }}>
                 {ROADS.map(road => {
                     const phase         = livePhase[road] || 'RED';
                     const count         = liveCountdown[road] || 0;
-                    const dist          = sensorData[road] || 5000;
+                    const us            = ultrasonicData[road] || { us1DistanceCm: 5000, us2DistanceCm: 5000, us1Blocked: false, us2Blocked: false, us1Stable: false, us2Stable: false, trafficLevel: 'None' };
                     const google        = googleTraffic[road] || 'Unknown';
                     const isWin         = winner === road;
-                    const ir            = irData[road] || { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' };
                     const ped           = pedStatus[road] || { requested: false, crossing: false, duration: 0 };
                     const scenario      = scenarioMap[road] || null;
                     const roadGreenTime = decisionGreenMap[road] || greenTime[road] || 3;
                     const isNonWinner   = !isWin && phase === 'RED';
                     const espUp         = espOnline[road] !== false;
+                    const piezoRoad     = piezoData[road] || { heavy: false, timestamp: 0, locked: false };
+                    const piezoActive   = piezoRoad.heavy === true;
+                    const trafficLevel  = us.trafficLevel || 'None';
 
-                    // ── PIEZO: read .heavy from structured object ──────────
-                    // heavy=true  → show orange badge, piezo section highlighted
-                    // heavy=false → badge hidden, section neutral
-                    const piezoRoad   = piezoData[road] || { heavy: false, timestamp: 0, locked: false };
-                    const piezoActive = piezoRoad.heavy === true;
-
-                    // heavyHere also accounts for heavyVehicleActive (legacy compat)
-                    const heavyHere   = piezoActive || (heavyVehicleActive[road] || false);
-
-                    // Compute what the green time label should say with piezo
-                    const irQueueLevel = ir.queueLevel || 'None';
                     let greenTimeLabel = '';
-                    if (irQueueLevel === 'Heavy' && piezoActive) {
-                        greenTimeLabel = `Both IR + Piezo → ${roadGreenTime}s (3s + 6s + 3s)`;
-                    } else if (irQueueLevel === 'Heavy') {
-                        greenTimeLabel = `Both blocked → ${roadGreenTime}s (3s + 6s heavy)`;
-                    } else if (irQueueLevel === 'Light' && piezoActive) {
-                        greenTimeLabel = `IR1 + Piezo → ${roadGreenTime}s (3s + 3s + 3s)`;
-                    } else if (irQueueLevel === 'Light') {
-                        greenTimeLabel = `One blocked → ${roadGreenTime}s (3s + 3s light)`;
+                    if (trafficLevel === 'Heavy' && piezoActive) {
+                        greenTimeLabel = `HEAVY Queue + Piezo → ${roadGreenTime}s (3s + 6s + 3s)`;
+                    } else if (trafficLevel === 'Heavy') {
+                        greenTimeLabel = `HEAVY Queue → ${roadGreenTime}s (3s + 6s)`;
+                    } else if (trafficLevel === 'Light' && piezoActive) {
+                        greenTimeLabel = `LIGHT Queue + Piezo → ${roadGreenTime}s (3s + 3s + 3s)`;
+                    } else if (trafficLevel === 'Light') {
+                        greenTimeLabel = `LIGHT Queue → ${roadGreenTime}s (3s + 3s)`;
+                    } else if (piezoActive) {
+                        greenTimeLabel = `Piezo only (no queue) → ${roadGreenTime}s (base 3s)`;
                     } else {
-                        greenTimeLabel = `No IR → ${roadGreenTime}s (base)`;
+                        greenTimeLabel = `No queue → ${roadGreenTime}s (base 3s)`;
                     }
 
                     return (
@@ -507,10 +477,9 @@ export default function AdminDashboard({ user, onLogout }) {
                                                 ⚡ ESP32 OFFLINE
                                             </span>
                                         )}
-                                        {/* Heavy vehicle badge — persists while piezoData[road].heavy is true */}
-                                        {heavyHere && (
+                                        {piezoActive && (
                                             <span style={{ background: '#1a1000', color: '#fb923c', border: '1px solid #f59e0b', padding: '2px 8px', borderRadius: 8, fontSize: 10, fontWeight: 'bold' }}>
-                                                🚛 HEAVY VEHICLE
+                                                🚛 HEAVY VEHICLE (+3s)
                                             </span>
                                         )}
                                     </div>
@@ -540,55 +509,60 @@ export default function AdminDashboard({ user, onLogout }) {
                                         </div>
                                     </div>
 
-                                    {/* Ultrasonic */}
+                                    {/* Ultrasonic Sensor US1 (Stop Line) */}
                                     <div style={{ background: '#0f172a', borderRadius: 8, padding: 10, marginBottom: 8 }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                                             <span>📡</span>
-                                            <span style={{ fontSize: 11, color: '#64748b' }}>Ultrasonic</span>
+                                            <span style={{ fontSize: 11, color: '#64748b' }}>Ultrasonic US1 (Stop Line)</span>
                                             <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 6, background: sensorWorking[road] ? '#14532d' : '#1e293b', color: sensorWorking[road] ? '#4ade80' : '#475569' }}>
                                                 {sensorWorking[road] ? '● ACTIVE' : '● OFFLINE'}
                                             </span>
-                                            {scenario && (
-                                                <span style={{ fontSize: 10, color: '#64748b' }}>
-                                                    → {scenario === 'IR' ? 'Using IR (dist < 20cm)' : 'Using distance'}
-                                                </span>
-                                            )}
                                         </div>
-                                        <div style={{ fontSize: 11, color: '#64748b' }}>
-                                            Distance: <strong style={{ color: dist >= 5000 ? '#475569' : dist < 20 ? '#ef4444' : dist < 100 ? '#f59e0b' : '#4ade80' }}>
-                                                {dist >= 5000 ? 'No vehicle' : `${Math.round(dist)} cm`}
+                                        <div style={{ fontSize: 12, marginBottom: 4 }}>
+                                            Distance: <strong style={{ color: us.us1DistanceCm >= 5000 ? '#475569' : us.us1DistanceCm < 100 ? '#ef4444' : '#f59e0b' }}>
+                                                {us.us1DistanceCm >= 5000 ? 'No vehicle' : `${Math.round(us.us1DistanceCm)} cm`}
                                             </strong>
+                                        </div>
+                                        <div style={{ fontSize: 11 }}>
+                                            Status: <span style={{
+                                                color: us.us1Stable ? '#4ade80' : us.us1Blocked ? '#fde047' : '#64748b',
+                                                fontWeight: 'bold'
+                                            }}>
+                                                {us.us1Stable ? '✅ STABLE (10+ sec) - Vehicle Queued' : us.us1Blocked ? '⏳ Detected (stabilizing)' : '🟢 Clear'}
+                                            </span>
                                         </div>
                                     </div>
 
-                                    {/* IR Sensors */}
+                                    {/* Ultrasonic Sensor US2 (Queue Detection) */}
                                     <div style={{ background: '#0f172a', borderRadius: 8, padding: 10, marginBottom: 8 }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                            <span>🔦</span>
-                                            <span style={{ fontSize: 11, color: '#64748b' }}>IR Sensors</span>
+                                            <span>📡📡</span>
+                                            <span style={{ fontSize: 11, color: '#64748b' }}>Ultrasonic US2 (Queue 3-4m)</span>
                                         </div>
-                                        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                                            {[
-                                                { label: 'IR-1 (0–5cm)',   blocked: ir.ir1Blocked },
-                                                { label: 'IR-2 (5–10cm)', blocked: ir.ir2Blocked },
-                                            ].map(s => (
-                                                <div key={s.label} style={{
-                                                    background: s.blocked ? '#7f1d1d' : '#1e293b',
-                                                    color: s.blocked ? '#f87171' : '#475569',
-                                                    border: `1px solid ${s.blocked ? '#ef4444' : '#334155'}`,
-                                                    borderRadius: 8, padding: '3px 8px', fontSize: 10, fontWeight: 'bold'
-                                                }}>
-                                                    {s.blocked ? '🔴' : '🟢'} {s.label}: {s.blocked ? 'BLOCKED' : 'CLEAR'}
-                                                </div>
-                                            ))}
+                                        <div style={{ fontSize: 12, marginBottom: 4 }}>
+                                            Distance: <strong style={{ color: us.us2DistanceCm >= 5000 ? '#475569' : us.us2DistanceCm < 350 ? '#ef4444' : '#f59e0b' }}>
+                                                {us.us2DistanceCm >= 5000 ? 'No queue' : `${Math.round(us.us2DistanceCm)} cm`}
+                                            </strong>
                                         </div>
-                                        <TrafficDensityBadge density={irQueueLevel} />
+                                        <div style={{ fontSize: 11 }}>
+                                            Status: <span style={{
+                                                color: us.us2Stable ? '#4ade80' : us.us2Blocked ? '#fde047' : '#64748b',
+                                                fontWeight: 'bold'
+                                            }}>
+                                                {us.us2Stable ? '✅ STABLE (10+ sec) - Queue Detected' : us.us2Blocked ? '⏳ Detected (stabilizing)' : '🟢 Clear'}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Traffic Density */}
+                                    <div style={{ background: '#0f172a', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                                        <TrafficDensityBadge density={trafficLevel} />
                                         <div style={{ fontSize: 10, color: '#64748b', marginTop: 5 }}>
                                             {greenTimeLabel}
                                         </div>
                                     </div>
 
-                                    {/* Piezo Sensor — highlighted when active */}
+                                    {/* Piezo Sensor */}
                                     <div style={{
                                         background: piezoActive ? '#1a1000' : '#0f172a',
                                         border: `1px solid ${piezoActive ? '#f59e0b' : '#1e293b'}`,
@@ -596,7 +570,7 @@ export default function AdminDashboard({ user, onLogout }) {
                                     }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                                             <span style={{ fontSize: 13 }}>🚛</span>
-                                            <span style={{ fontSize: 11, color: '#64748b' }}>Piezo Sensor</span>
+                                            <span style={{ fontSize: 11, color: '#64748b' }}>Piezo Sensor (Heavy Vehicle)</span>
                                             <span style={{
                                                 fontSize: 10, padding: '1px 8px', borderRadius: 6,
                                                 background: piezoActive ? '#3d2000' : '#1e293b',
@@ -604,19 +578,14 @@ export default function AdminDashboard({ user, onLogout }) {
                                                 border: `1px solid ${piezoActive ? '#f59e0b' : '#334155'}`,
                                                 fontWeight: 'bold'
                                             }}>
-                                                {piezoActive ? '● HEAVY VEHICLE DETECTED' : '● NO HEAVY VEHICLE'}
+                                                {piezoActive ? '● HEAVY VEHICLE DETECTED (+3s)' : '● NO HEAVY VEHICLE'}
                                             </span>
                                         </div>
                                         <div style={{ fontSize: 10, color: '#64748b', marginTop: 5 }}>
                                             {piezoActive
-                                                ? 'Heavy vehicle confirmed (IR + vibration). Green time extended by +3s. Badge clears when green cycle ends.'
-                                                : 'Monitoring for heavy vehicle vibration. IR must also be blocked to confirm.'}
+                                                ? 'Heavy vehicle confirmed. Adds +3s to green time when queue present.'
+                                                : 'Monitoring for heavy vehicle vibration. Requires queue to confirm.'}
                                         </div>
-                                        {piezoActive && (
-                                            <div style={{ marginTop: 5, fontSize: 10, color: '#fb923c', fontWeight: 'bold' }}>
-                                                ⚡ +3s piezo bonus applied to this road's next green cycle
-                                            </div>
-                                        )}
                                     </div>
 
                                     {/* Weather */}
@@ -625,18 +594,16 @@ export default function AdminDashboard({ user, onLogout }) {
                                             <span>{rainDetected ? '🌧️' : '☀️'}</span>
                                             <span style={{ fontSize: 11, color: '#64748b' }}>Weather:</span>
                                             <span style={{ fontSize: 11, color: rainDetected ? '#60a5fa' : '#4ade80', fontWeight: 'bold' }}>
-                                                {rainDetected ? `Raining — Yellow ${yellowTime}s (3s+2s)` : `Dry — Yellow ${yellowTime}s (normal)`}
+                                                {rainDetected ? `Raining — Yellow ${yellowTime}s` : `Dry — Yellow ${yellowTime}s`}
                                             </span>
                                         </div>
                                     </div>
 
-                                    {/* Next intersection */}
+                                    {/* Next intersection traffic */}
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                                         <span style={{ fontSize: 13 }}>🗺️</span>
                                         <span style={{ fontSize: 11, color: '#64748b' }}>Next Intersection:</span>
                                         <TrafficBadge level={google} />
-                                        {scenario === 'IR' && <span style={{ fontSize: 10, color: '#64748b' }}>(ranking only)</span>}
-                                        {scenario === 'ULTRASONIC' && <span style={{ fontSize: 10, color: '#64748b' }}>(timing + ranking)</span>}
                                     </div>
 
                                     {/* Pedestrian status */}
@@ -652,18 +619,6 @@ export default function AdminDashboard({ user, onLogout }) {
                                             {ped.requested && !ped.crossing && <span style={{ fontSize: 10, color: '#fde047', fontWeight: 'bold' }}>● WAITING</span>}
                                             {!ped.requested && !ped.crossing && <span style={{ fontSize: 10, color: '#475569' }}>Idle</span>}
                                         </div>
-                                        {ped.requested && !ped.crossing && (
-                                            <div style={{ marginTop: 4, fontSize: 10, color: '#fde047' }}>
-                                                {phase === 'RED' && 'Pressed during RED → crossing when remaining time > 3s'}
-                                                {phase === 'YELLOW' && 'Pressed during YELLOW → crossing after yellow ends'}
-                                                {phase === 'GREEN' && 'Pressed during GREEN → crossing after green + yellow finish'}
-                                            </div>
-                                        )}
-                                        {ped.crossing && (
-                                            <div style={{ marginTop: 4, fontSize: 10, color: '#60a5fa' }}>
-                                                Pedestrian crossing active — car signal held RED
-                                            </div>
-                                        )}
                                     </div>
 
                                     <ForcePanel road={road} onForce={handleForce} />
@@ -697,8 +652,9 @@ export default function AdminDashboard({ user, onLogout }) {
                         { label: 'Google Traffic',  value: googleWorking ? 'Active' : 'Disabled',         ok: googleWorking },
                         { label: 'Rain Sensor',     value: rainDetected ? 'Rain' : 'Clear',               ok: true },
                         { label: 'Winner Scenario', value: decision?.winnerScenario || '—',               ok: !!decision?.winnerScenario },
-                        { label: 'Green Base',      value: '3s base + IR bonus (Light +3s, Heavy +6s)',   ok: true },
-                        { label: 'Piezo Bonus',     value: 'IR1+Piezo=9s | Both IR+Piezo=12s (+3s stack)', ok: true },
+                        { label: 'Green Base',      value: '3s base + US stable bonus (Light +3s, Heavy +6s)', ok: true },
+                        { label: 'Piezo Bonus',     value: 'Light+Piezo=9s | Heavy+Piezo=12s (+3s stack)', ok: true },
+                        { label: 'Stability Req',   value: '10 seconds for vehicle detection',           ok: true },
                     ].map(m => (
                         <div key={m.label} style={{ background: '#0f172a', borderRadius: 10, padding: 12, border: `1px solid ${m.ok ? '#22c55e33' : '#ef444433'}` }}>
                             <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4, letterSpacing: 1 }}>{m.label}</div>
@@ -716,26 +672,29 @@ export default function AdminDashboard({ user, onLogout }) {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                             <thead>
                                 <tr style={{ borderBottom: '1px solid #1e3a5f' }}>
-                                    {['Rank','Road','Scenario','Distance','IR Queue','Piezo (+3s)','Rain','Next Traffic','Score','Green Time','LED'].map(h => (
+                                    {['Rank','Road','Scenario','US1 Distance','US2 Distance','Queue Level','Piezo','Rain','Next Traffic','Score','Green Time','LED'].map(h => (
                                         <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#475569', fontSize: 10, letterSpacing: 1, whiteSpace: 'nowrap' }}>{h}</th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
                                 {decision.priorities.map((p, i) => {
-                                    const irForRoad    = irData[p.road] || { queueLevel: 'None' };
-                                    // Read .heavy from structured piezoData object
+                                    const usForRoad = ultrasonicData[p.road] || { trafficLevel: 'None', us1DistanceCm: 5000, us2DistanceCm: 5000 };
                                     const piezoForRoad = (piezoData[p.road] || {}).heavy === true;
                                     return (
                                         <tr key={p.road} style={{ borderBottom: '1px solid #0f172a', background: i === 0 ? 'rgba(34,197,94,0.05)' : 'transparent' }}>
                                             <td style={{ padding: '8px 10px', color: i === 0 ? '#4ade80' : '#64748b', fontWeight: 'bold' }}>#{i+1}</td>
                                             <td style={{ padding: '8px 10px', fontWeight: 'bold', color: i === 0 ? '#e2e8f0' : '#94a3b8' }}>{p.road}</td>
                                             <td style={{ padding: '8px 10px' }}>{p.sensorScenario ? <ScenarioBadge scenario={p.sensorScenario} /> : '—'}</td>
-                                            <td style={{ padding: '8px 10px', color: '#94a3b8' }}>{p.distance ? `${Math.round(p.distance)}cm` : 'None'}</td>
-                                            <td style={{ padding: '8px 10px', color: irForRoad.queueLevel === 'Heavy' ? '#f87171' : irForRoad.queueLevel === 'Light' ? '#fde047' : '#4ade80', fontWeight: 'bold' }}>
-                                                {irForRoad.queueLevel === 'Heavy' ? '🔴 HEAVY' : irForRoad.queueLevel === 'Light' ? '🟡 LIGHT' : '🟢 NONE'}
+                                            <td style={{ padding: '8px 10px', color: usForRoad.us1DistanceCm < 100 ? '#ef4444' : '#94a3b8' }}>
+                                                {usForRoad.us1DistanceCm >= 5000 ? 'No vehicle' : `${Math.round(usForRoad.us1DistanceCm)}cm`}
                                             </td>
-                                            {/* Piezo column: shows YES when .heavy=true, persists until server clears */}
+                                            <td style={{ padding: '8px 10px', color: usForRoad.us2DistanceCm < 350 ? '#ef4444' : '#94a3b8' }}>
+                                                {usForRoad.us2DistanceCm >= 5000 ? 'No queue' : `${Math.round(usForRoad.us2DistanceCm)}cm`}
+                                            </td>
+                                            <td style={{ padding: '8px 10px', color: usForRoad.trafficLevel === 'Heavy' ? '#f87171' : usForRoad.trafficLevel === 'Light' ? '#fde047' : '#4ade80', fontWeight: 'bold' }}>
+                                                {usForRoad.trafficLevel === 'Heavy' ? '🔴 HEAVY' : usForRoad.trafficLevel === 'Light' ? '🟡 LIGHT' : '🟢 NONE'}
+                                            </td>
                                             <td style={{ padding: '8px 10px' }}>
                                                 <span style={{ color: piezoForRoad ? '#fb923c' : '#475569', fontWeight: 'bold', fontSize: 11 }}>
                                                     {piezoForRoad ? '🚛 YES (+3s)' : '—'}
@@ -775,23 +734,23 @@ export default function AdminDashboard({ user, onLogout }) {
                 </div>
             )}
 
-            {/* ── SYSTEM RULES ── */}
+            {/* ── SYSTEM RULES (Ultrasonic Version) ── */}
             <div style={{ background: 'linear-gradient(160deg,#1a2540,#111827)', borderRadius: 16, padding: 16, marginTop: 8, border: '1px solid #1e3a5f' }}>
-                <h3 style={{ margin: '0 0 12px', color: '#94a3b8', fontSize: 13 }}>📋 System Rules</h3>
+                <h3 style={{ margin: '0 0 12px', color: '#94a3b8', fontSize: 13 }}>📋 System Rules (Ultrasonic Detection)</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 10, fontSize: 11, color: '#64748b' }}>
-                    <div>📡 <strong style={{ color: '#60a5fa' }}>ULTRASONIC mode:</strong> dist ≥ 20cm — uses distance + Google traffic for timing</div>
-                    <div>🔦 <strong style={{ color: '#c084fc' }}>IR mode:</strong> dist &lt; 20cm — uses IR sensors for timing (vehicle at stop line)</div>
-                    <div>🟢 <strong>GREEN:</strong> 3s base | IR1 only → +3s=6s | Both IR → +6s=9s | IR+Piezo → +3s stacked</div>
-                    <div>🚛 <strong>Piezo stacking:</strong> IR1+Piezo=9s | Both IR+Piezo=12s | Piezo alone=no bonus</div>
+                    <div>📡 <strong style={{ color: '#60a5fa' }}>US1 (Stop Line):</strong> Detects vehicles within 100cm. 10s stability required.</div>
+                    <div>📡📡 <strong style={{ color: '#60a5fa' }}>US2 (Queue):</strong> Detects queue within 350cm. 10s stability required.</div>
+                    <div>🟢 <strong>GREEN:</strong> 3s base | US1 stable only → +3s=6s | Both US stable → +6s=9s</div>
+                    <div>🚛 <strong>Piezo stacking:</strong> Light+Piezo=9s | Heavy+Piezo=12s | Piezo alone=no bonus</div>
                     <div>🟡 <strong>YELLOW:</strong> 3s dry, +2s rain = 5s total | Sequence: RED→YELLOW→GREEN→YELLOW→RED</div>
                     <div>🔴 <strong>RED (others):</strong> Dynamic = winner GREEN + YELLOW duration each cycle</div>
-                    <div>🚶 <strong>Pedestrian:</strong> A=RED (immediate if &gt;3s remain), B=YELLOW post-green (hold), C=GREEN (wait), D=YELLOW (countdown then cross)</div>
-                    <div>🚛 <strong>Piezo persistence:</strong> Badge shows from tap → through extended green → clears when green ends. IR must be blocked to confirm.</div>
+                    <div>🚶 <strong>Pedestrian:</strong> Crossing starts during RED or after current phase ends.</div>
+                    <div>⚡ <strong>Stability requirement:</strong> Distance must be stable for 10 seconds to confirm queued vehicle.</div>
                     <div>⚡ <strong>ESP32 Offline:</strong> Downed lanes excluded from winning — synthetic RED timing applied</div>
                 </div>
             </div>
 
-            {/* ── TRAFFIC ANALYTICS ── */}
+            {/* ── TRAFFIC ANALYTICS (Ultrasonic Version) ── */}
             <div style={{ background: 'linear-gradient(160deg,#1a2540,#111827)', borderRadius: 16, padding: 20, marginTop: 22, border: '1px solid #1e3a5f' }}>
                 <h3 style={{ margin: '0 0 6px', color: '#e2e8f0', fontSize: 16 }}>🗺️ Traffic Analytics — Nawinna Junction</h3>
                 <p style={{ color: '#475569', fontSize: 12, margin: '0 0 16px' }}>
@@ -823,11 +782,11 @@ export default function AdminDashboard({ user, onLogout }) {
                         </p>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12 }}>
                             {ROADS.map(road => {
-                                const dist   = sensorData[road] || 5000;
-                                const ir     = irData[road] || {};
-                                const google = googleTraffic[road] || 'Unknown';
-                                const heavy  = (piezoData[road] || {}).heavy === true;
-                                const espUp  = espOnline[road] !== false;
+                                const us       = ultrasonicData[road] || { trafficLevel: 'None', us1DistanceCm: 5000 };
+                                const google   = googleTraffic[road] || 'Unknown';
+                                const heavy    = (piezoData[road] || {}).heavy === true;
+                                const espUp    = espOnline[road] !== false;
+                                const queueLvl = us.trafficLevel || 'None';
 
                                 let congestion = 'Low';
                                 let waitEst    = 'Under 1 min';
@@ -837,15 +796,15 @@ export default function AdminDashboard({ user, onLogout }) {
                                 if (!espUp) {
                                     congestion = 'Unknown'; waitEst = 'Sensor offline';
                                     tip = 'No live data — proceed with caution'; barColor = '#64748b';
-                                } else if (ir.queueLevel === 'Heavy' || google === 'Heavy') {
+                                } else if (queueLvl === 'Heavy' || google === 'Heavy') {
                                     congestion = 'Heavy';
                                     waitEst = `${(greenTime[road] || 9) + yellowTime}–${(greenTime[road] || 9) * 2}s wait`;
                                     tip = 'Expect delays — consider alternate route'; barColor = '#ef4444';
-                                } else if (ir.queueLevel === 'Light' || google === 'Medium') {
+                                } else if (queueLvl === 'Light' || google === 'Medium') {
                                     congestion = 'Moderate';
                                     waitEst = `${(greenTime[road] || 6)}–${(greenTime[road] || 6) + yellowTime}s wait`;
                                     tip = 'Some traffic — normal wait time'; barColor = '#f59e0b';
-                                } else if (dist < 100) {
+                                } else if (us.us1DistanceCm < 100) {
                                     congestion = 'Moderate'; waitEst = 'Short queue detected';
                                     tip = 'Light traffic — good to go'; barColor = '#f59e0b';
                                 }
@@ -948,7 +907,7 @@ export default function AdminDashboard({ user, onLogout }) {
             </div>
 
             <div style={{ textAlign: 'center', marginTop: 28, color: '#1e3a5f', fontSize: 11 }}>
-                HYDRA v7.0 — Piezo Persistence Fix — Nawinna Junction, Kurunegala
+                HYDRA v8.0 — Ultrasonic Detection — Admin Dashboard — Nawinna Junction, Kurunegala
             </div>
         </div>
     );

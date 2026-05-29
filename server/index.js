@@ -944,11 +944,18 @@ let currentWinner = null;
 let phaseTimer    = null;
 let currentPhase  = 'RED';
 
-let irData = {
-    North: { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' },
-    South: { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' },
-    East:  { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' },
-    West:  { ir1Blocked: false, ir2Blocked: false, queueLevel: 'None' }
+let queueData = {
+    North: { queueLevel: 'None' },
+    South: { queueLevel: 'None' },
+    East:  { queueLevel: 'None' },
+    West:  { queueLevel: 'None' }
+};
+
+let queueStability = {
+    North: { candidateLevel: 'None', stableSince: 0, queueLevel: 'None' },
+    South: { candidateLevel: 'None', stableSince: 0, queueLevel: 'None' },
+    East:  { candidateLevel: 'None', stableSince: 0, queueLevel: 'None' },
+    West:  { candidateLevel: 'None', stableSince: 0, queueLevel: 'None' }
 };
 
 // ── PIEZO STATE (v7.0 — persistent, locked per road) ─────────────────────
@@ -1108,38 +1115,30 @@ aedes.on('publish', async (packet, client) => {
                 { road, distanceCm: data.distanceCm, vehicleDetected: data.distanceCm <= 400, timestamp: new Date() },
                 { upsert: true, returnDocument: 'after' }
             );
-            console.log(`📡 Ultrasonic [${road}]: ${data.distanceCm < 5000 ? data.distanceCm + 'cm' : 'No vehicle'}`);
-            io.emit('sensorUpdate', { road, distanceCm: data.distanceCm });
-        } catch (e) { console.error('⚠️ Ultrasonic parse error:', e.message); }
-    }
 
-    // ── IR Sensors Data ──────────────────────────────────────────────────
-    if (topic.startsWith('traffic/ir/')) {
-        try {
-            const data = JSON.parse(payload);
-            const road = topic.split('/')[2];
-            if (!ROADS.includes(road)) return;
-            irData[road] = {
-                ir1Blocked: data.ir1Blocked || false,
-                ir2Blocked: data.ir2Blocked || false,
-                queueLevel: data.queueLevel || 'None'
-            };
-            let trafficDensity = 'None';
-            if (data.ir1Blocked && data.ir2Blocked) {
-                trafficDensity = 'Heavy';
-                // greenTime[road] is now computed by signalDecision including piezo bonus
-                // Store base IR green time here; piezo bonus is added in signalDecision
-                greenTime[road] = 9;
-            } else if (data.ir1Blocked) {
-                trafficDensity = 'Light';
-                greenTime[road] = 6;
-            } else {
-                trafficDensity = 'None';
-                greenTime[road] = 3;
+            const now = Date.now();
+            const level = classifyQueueByUltrasonic(data.distanceCm);
+            const stable = queueStability[road];
+
+            if (level !== stable.candidateLevel) {
+                stable.candidateLevel = level;
+                stable.stableSince = now;
             }
-            console.log(`🔦 IR [${road}]: IR1=${data.ir1Blocked ? 'BLK' : 'CLR'} IR2=${data.ir2Blocked ? 'BLK' : 'CLR'} → ${trafficDensity}`);
-            io.emit('irUpdate', { road, ir1Blocked: data.ir1Blocked, ir2Blocked: data.ir2Blocked, queueLevel: trafficDensity });
-        } catch (e) { console.error('⚠️ IR parse error:', e.message); }
+
+            if (level === 'None') {
+                stable.queueLevel = 'None';
+            } else if (now - stable.stableSince >= 10000) {
+                stable.queueLevel = level;
+            }
+
+            queueData[road] = {
+                queueLevel: stable.queueLevel
+            };
+
+            console.log(`📡 Ultrasonic [${road}]: ${data.distanceCm < 5000 ? data.distanceCm + 'cm' : 'No vehicle'} → ${stable.queueLevel}`);
+            io.emit('sensorUpdate', { road, distanceCm: data.distanceCm });
+            io.emit('queueUpdate', { road, queueLevel: stable.queueLevel });
+        } catch (e) { console.error('⚠️ Ultrasonic parse error:', e.message); }
     }
 
     // ── Piezo Sensor Data (v7.0 — persistent locked state) ───────────────
@@ -1149,14 +1148,14 @@ aedes.on('publish', async (packet, client) => {
             const road = topic.split('/')[2];
             if (!ROADS.includes(road)) return;
 
-            const irRoad = irData[road] || { ir1Blocked: false, ir2Blocked: false };
-            const irBlocked = irRoad.ir1Blocked || irRoad.ir2Blocked;
+            const distanceCm = sensorData[road];
+            const vehicleAtStopLine = distanceCm !== undefined && distanceCm !== null && distanceCm <= 400;
 
             // Only process if:
-            //   1. At least one IR sensor is blocked (confirms vehicle is at stop line)
-            //   2. The sensor actually detected vibration
+            //   1. Ultrasonic reports a vehicle near the stop line
+            //   2. The piezo sensor detected vibration
             //   3. This road is NOT already locked (first tap wins, subsequent ignored)
-            if (data.heavyVehicle && irBlocked && !piezoData[road].locked) {
+            if (data.heavyVehicle && vehicleAtStopLine && !piezoData[road].locked) {
                 piezoData[road] = {
                     heavy:     true,
                     timestamp: Date.now(),
@@ -1164,7 +1163,7 @@ aedes.on('publish', async (packet, client) => {
                 };
                 heavyVehicleActive[road] = true;
 
-                console.log(`🚛 HEAVY VEHICLE confirmed on ${road} (IR+Piezo) — locked until green complete`);
+                console.log(`🚛 HEAVY VEHICLE confirmed on ${road} (Ultrasonic+Piezo) — locked until green complete`);
                 io.emit('piezoUpdate',        { road, heavyVehicle: true, rawValue: data.piezoValue });
                 io.emit('heavyVehicleUpdate', { road, active: true });
                 broadcastFullState();
@@ -1172,9 +1171,9 @@ aedes.on('publish', async (packet, client) => {
             } else if (data.heavyVehicle && piezoData[road].locked) {
                 // Subsequent tap on an already-locked road — silently ignore
                 console.log(`🚛 [${road}] Piezo tap ignored — already locked for this cycle`);
-            } else if (data.heavyVehicle && !irBlocked) {
-                // Piezo detected vibration but no IR blocked — not confirmed
-                console.log(`🚛 [${road}] Piezo tap ignored — IR not blocked (vehicle not at stop line)`);
+            } else if (data.heavyVehicle && !vehicleAtStopLine) {
+                // Piezo detected vibration but no vehicle currently near the stop line
+                console.log(`🚛 [${road}] Piezo tap ignored — no ultrasonic vehicle at stop line`);
             }
 
         } catch (e) { console.error('⚠️ Piezo parse error:', e.message); }
@@ -1283,7 +1282,7 @@ function decideNextWinner() {
         googleTraffic,
         sensorWorking,
         googleWorking,
-        irData,
+        queueData,
         piezoData,   // { road: { heavy, timestamp, locked } }
         rainDetected,
         pedStatus,
@@ -1399,7 +1398,7 @@ function runOneCycle() {
                         for (const road of ROADS) {
                             await saveAnalyticsRecord(road, {
                                 distanceCm:   sensorData[road] || 5000,
-                                queueLevel:   irData[road]?.queueLevel || 'None',
+                                queueLevel:   queueData[road]?.queueLevel || 'None',
                                 googleTraffic: googleTraffic[road] || 'Unknown',
                                 rainDetected:  rainDetected,
                                 greenTime:     greenTime[road] || 3,
@@ -1446,7 +1445,7 @@ function broadcastFullState() {
         googleTraffic,
         sensorWorking,
         googleWorking,
-        irData,
+        queueData,
         piezoData,           // structured objects with heavy/timestamp/locked
         rainDetected,
         yellowTime,
@@ -1536,7 +1535,7 @@ app.get('/api/traffic', async (req, res) => {
             sensorWorking,
             googleWorking,
             currentDecision: latestDecision,
-            irData,
+            queueData,
             piezoData,
             rainDetected,
             yellowTime,
@@ -1562,7 +1561,7 @@ app.get('/api/sensor-data', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/api/ir-data',     (req, res) => res.json(irData));
+app.get('/api/queue-data', (req, res) => res.json(queueData));
 app.get('/api/rain-status', (req, res) => res.json({ rainDetected, yellowTime }));
 
 app.post('/api/traffic/control', (req, res) => {
@@ -1597,7 +1596,7 @@ app.get('/api/health', (req, res) => {
         status: 'online', googleWorking, sensorWorking, currentWinner, currentPhase,
         uptime: process.uptime(), rainDetected, yellowTime,
         currentRedTime: redTime, redTimeNote: 'Dynamic: winner greenTime + yellowTime',
-        irData, espOnline
+        queueData, espOnline
     });
 });
 
@@ -1609,7 +1608,7 @@ io.on('connection', (socket) => {
     socket.emit('fullState', {
         liveSignalState, liveCountdown, livePhase, latestDecision,
         sensorData, googleTraffic, sensorWorking, googleWorking,
-        irData, piezoData, rainDetected, yellowTime,
+        queueData, piezoData, rainDetected, yellowTime,
         pedStatus, greenTime, redTime, espOnline, heavyVehicleActive
     });
     socket.on('disconnect', () => console.log('🖥️ Dashboard disconnected:', socket.id));
