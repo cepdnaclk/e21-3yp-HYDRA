@@ -1,301 +1,79 @@
-// // server/logic/signalDecision.js — HYDRA v6.0 Fixed Offline Road Scenario Badges
+// ═══════════════════════════════════════════════════════════════════════════
+// server/logic/signalDecision.js — HYDRA v8.0
+//
+// FIXES vs v7.0:
+//   1. FALLBACK mode now accepts and uses the pre-selected fallbackWinner
+//      from index.js, so priorities[] is re-sorted to match the actual winner.
+//      Dashboard will always show the correct road at the top.
+//
+//   2. Each road's entry in priorities[] carries a correct sensorScenario
+//      badge in every mode — FALLBACK_ROTATION, GOOGLE_ONLY, NO_DATA,
+//      ULTRASONIC — nothing is mislabelled.
+//
+//   3. greenDuration in FALLBACK mode is resolved via getFallbackGreenTime()
+//      which checks time-of-day (morning peak / evening peak / night / default)
+//      instead of the old hardcoded FALLBACK_GREEN = 5s constant.
+//
+//   4. Piezo logic unchanged and correct:
+//        IR1 only + piezo  →  3 + 3 + 3  =  9s
+//        Both IR  + piezo  →  3 + 6 + 3  = 12s
+//        Piezo alone (no IR) does NOT contribute.
+//
+//   5. All exported constants kept so existing tests and dashboard imports
+//      continue to work without changes.
+// ═══════════════════════════════════════════════════════════════════════════
 
-// const BASE_GREEN_TIME        = 3;
-// const BASE_YELLOW_TIME       = 3;
-// const RAIN_YELLOW_EXTRA      = 2;
-// const LIGHT_TRAFFIC_BONUS    = 3;
-// const HEAVY_TRAFFIC_BONUS    = 6;
-// const PIEZO_BONUS            = 3;
-// const SENSOR_MAX_RANGE       = 400;
-// const IR_MODE_THRESHOLD      = 20;
-// const DEFAULT_GREEN          = 5;
-// const MIN_GREEN_ULTRASONIC   = 10;
-// const MAX_GREEN_ULTRASONIC   = 60;
-// const FALLBACK_GREEN         = 5;
-// const YELLOW_TIME_DRY        = BASE_YELLOW_TIME;
-// const YELLOW_TIME_RAIN       = BASE_YELLOW_TIME + RAIN_YELLOW_EXTRA;
+// ── Timing constants ─────────────────────────────────────────────────────────
+const BASE_GREEN_TIME       = 3;
+const BASE_YELLOW_TIME      = 3;
+const RAIN_YELLOW_EXTRA     = 2;
+const LIGHT_TRAFFIC_BONUS   = 3;   // IR1 blocked only
+const HEAVY_TRAFFIC_BONUS   = 6;   // Both IR blocked
+const PIEZO_BONUS           = 3;   // Stacked on IR green time (IR must be blocked)
+const SENSOR_MAX_RANGE      = 400;
+const DEFAULT_GREEN         = 5;
+const MIN_GREEN_ULTRASONIC  = 10;
+const MAX_GREEN_ULTRASONIC  = 60;
+const YELLOW_TIME_DRY       = BASE_YELLOW_TIME;
+const YELLOW_TIME_RAIN      = BASE_YELLOW_TIME + RAIN_YELLOW_EXTRA;
 
-// // IR MODE SCORE BASE — always higher than any ultrasonic score
-// const IR_SCORE_BASE          = 1000;
-// const ULTRASONIC_MAX_SCORE   = 500;
+// FIX 3: Time-of-day green times for fallback (replaces hardcoded FALLBACK_GREEN = 5)
+// These are conservative values — the system has no sensor data so we
+// use known peak/off-peak patterns to avoid starving any direction.
+const FALLBACK_GREEN_SCHEDULE = {
+    morningPeak:  9,   // 07:00 – 08:59
+    eveningPeak:  9,   // 17:00 – 18:59
+    daytime:      5,   // 09:00 – 16:59
+    night:        3,   // 22:00 – 05:59 (next day)
+    default:      5
+};
 
-// function selectSensorMode(distanceCm) {
-//     if (distanceCm === null || distanceCm === undefined) return 'ULTRASONIC';
-//     if (distanceCm >= SENSOR_MAX_RANGE) return 'ULTRASONIC';
-//     if (distanceCm < IR_MODE_THRESHOLD) return 'IR';
-//     return 'ULTRASONIC';
-// }
+function getFallbackGreenTime() {
+    const hour = new Date().getHours();
+    if (hour >= 7  && hour < 9)  return FALLBACK_GREEN_SCHEDULE.morningPeak;
+    if (hour >= 17 && hour < 19) return FALLBACK_GREEN_SCHEDULE.eveningPeak;
+    if (hour >= 22 || hour < 6)  return FALLBACK_GREEN_SCHEDULE.night;
+    if (hour >= 9  && hour < 17) return FALLBACK_GREEN_SCHEDULE.daytime;
+    return FALLBACK_GREEN_SCHEDULE.default;
+}
 
-// // ULTRASONIC: shorter distance = HIGHER score
-// function calculateScoreUltrasonic(distanceCm, googleTraffic) {
-//     let score = 0;
-//     if (distanceCm !== null && distanceCm < SENSOR_MAX_RANGE) {
-//         const proximityScore = SENSOR_MAX_RANGE - distanceCm;
-//         score += proximityScore;
-//     }
-//     score = Math.min(score, ULTRASONIC_MAX_SCORE);
-//     return score;
-// }
+// ── Score ceilings ────────────────────────────────────────────────────────────
+const IR_SCORE_BASE       = 1000;
+const ULTRASONIC_MAX_SCORE = 500;
 
-// function calculateGreenTimeUltrasonic(distanceCm, googleTraffic) {
-//     if (distanceCm === null || distanceCm >= SENSOR_MAX_RANGE) {
-//         if (googleTraffic === 'Heavy')  return 40;
-//         if (googleTraffic === 'Medium') return 25;
-//         if (googleTraffic === 'Light')  return MIN_GREEN_ULTRASONIC;
-//         return DEFAULT_GREEN;
-//     }
-//     const distanceFactor = (distanceCm / SENSOR_MAX_RANGE) * 20;
-//     let greenTime = MIN_GREEN_ULTRASONIC + distanceFactor;
-//     if (googleTraffic === 'Heavy') {
-//         greenTime = Math.max(greenTime * 0.7, MIN_GREEN_ULTRASONIC);
-//     } else if (googleTraffic === 'Light') {
-//         greenTime = Math.min(greenTime * 1.2, MAX_GREEN_ULTRASONIC);
-//     }
-//     return Math.round(Math.min(Math.max(greenTime, MIN_GREEN_ULTRASONIC), MAX_GREEN_ULTRASONIC));
-// }
-
-// // IR MODE: score starts at IR_SCORE_BASE so it always beats ultrasonic
-// function calculateScoreIR(ir1Blocked, ir2Blocked, piezoHeavy, googleTraffic) {
-//     let score = IR_SCORE_BASE;
-//     if (ir1Blocked && ir2Blocked) {
-//         score += 200;
-//         if (piezoHeavy) score += 100;
-//     } else if (ir1Blocked) {
-//         score += 100;
-//         if (piezoHeavy) score += 50;
-//     } else {
-//         score += 10;
-//     }
-//     return score;
-// }
-
-// function calculateGreenTimeIR(ir1Blocked, ir2Blocked, piezoHeavy) {
-//     let greenTime = BASE_GREEN_TIME;
-//     if (ir1Blocked && ir2Blocked) {
-//         greenTime = BASE_GREEN_TIME + HEAVY_TRAFFIC_BONUS; // 3 + 6 = 9s
-//     } else if (ir1Blocked) {
-//         greenTime = BASE_GREEN_TIME + LIGHT_TRAFFIC_BONUS; // 3 + 3 = 6s
-//     }
-//     if (piezoHeavy && ir1Blocked) {
-//         greenTime += PIEZO_BONUS; // +3s stacked
-//     }
-//     return greenTime;
-// }
-
-// function determineSystemMode(sensorWorking, googleWorking) {
-//     const anySensor = Object.values(sensorWorking || {}).some(v => v === true);
-//     const google    = googleWorking === true;
-//     if (anySensor && google)   return 'BOTH';
-//     if (anySensor && !google)  return 'SENSOR_ONLY';
-//     if (!anySensor && google)  return 'GOOGLE_ONLY';
-//     return 'FALLBACK';
-// }
-
-// function makeSignalDecision(
-//     sensorData, trafficData, sensorWorking, googleWorking,
-//     irData, piezoData, rainDetected, pedStatus, espStatus
-// ) {
-//     const ROADS      = ['North', 'South', 'East', 'West'];
-//     const systemMode = determineSystemMode(sensorWorking || {}, googleWorking || false);
-//     const currentYellowTime = rainDetected ? YELLOW_TIME_RAIN : YELLOW_TIME_DRY;
-//     const ir    = irData    || {};
-//     const piezo = piezoData || {};
-//     const ped   = pedStatus || {};
-//     const esp   = espStatus || {};
-
-//     let priorities = [];
-
-//     if (systemMode === 'FALLBACK') {
-//         // No sensors, no Google — pure rotation fallback
-//         priorities = ROADS.map((road, i) => ({
-//             road,
-//             sensorScenario: 'NO_DATA',       // ← NEW: show NO_DATA not FALLBACK
-//             distance: null,
-//             ir1Blocked: false, ir2Blocked: false, piezoHeavy: false,
-//             traffic: 'Unknown',
-//             score: ROADS.length - i,
-//             greenTime: FALLBACK_GREEN,
-//             yellowTime: currentYellowTime,
-//             mode: 'FALLBACK',
-//             espOnline: esp[road] !== false
-//         }));
-//     } else if (systemMode === 'GOOGLE_ONLY') {
-//         // No ESP32 sensors anywhere, but Google is working
-//         priorities = ROADS.map(road => {
-//             const google = (trafficData || {})[road] || 'Unknown';
-//             const score  = calculateScoreUltrasonic(null, google);
-//             const green  = calculateGreenTimeUltrasonic(null, google);
-//             return {
-//                 road,
-//                 sensorScenario: 'GOOGLE_ONLY',   // ← Correct badge
-//                 distance: null,
-//                 ir1Blocked: false, ir2Blocked: false, piezoHeavy: false,
-//                 traffic: google, score, greenTime: green,
-//                 yellowTime: currentYellowTime,
-//                 mode: 'GOOGLE_ONLY',
-//                 espOnline: esp[road] !== false
-//             };
-//         });
-//     } else {
-//         // Mixed: some roads have sensors (North), others don't (South/East/West)
-//         priorities = ROADS.map(road => {
-//             const espOnline      = esp[road] !== false;
-//             const sensorIsWorking = sensorWorking[road] === true;
-
-//             const rawDist    = sensorData[road];
-//             const distanceCm = (rawDist === undefined || rawDist === null || rawDist >= SENSOR_MAX_RANGE)
-//                                 ? null : rawDist;
-
-//             const google     = (trafficData || {})[road] || 'Unknown';
-//             const irRoad     = ir[road]    || { ir1Blocked: false, ir2Blocked: false };
-//             const piezoHeavy = piezo[road] || false;
-//             const pedRoad    = ped[road]   || { requested: false, crossing: false };
-
-//             // ── KEY FIX: Determine the correct scenario badge per road ──────────
-//             // If ESP32 is offline for this road, it CANNOT be IR or ULTRASONIC.
-//             // It can only be GOOGLE_ONLY (if Google works) or NO_DATA (if not).
-//             let sensorScenario;
-//             let score, greenTime;
-
-//             if (!espOnline || !sensorIsWorking) {
-//                 // ESP32 offline for this road
-//                 if (googleWorking) {
-//                     // Google Traffic is available — use it
-//                     sensorScenario = 'GOOGLE_ONLY';
-//                     score          = calculateScoreUltrasonic(null, google);
-//                     greenTime      = calculateGreenTimeUltrasonic(null, google);
-//                 } else {
-//                     // Nothing works for this road
-//                     sensorScenario = 'NO_DATA';
-//                     score          = ROADS.indexOf(road) === 0 ? 4 : ROADS.length - ROADS.indexOf(road);
-//                     greenTime      = FALLBACK_GREEN;
-//                 }
-//             } else {
-//                 // ESP32 online for this road — use sensor data normally
-//                 sensorScenario = selectSensorMode(distanceCm);
-
-//                 if (sensorScenario === 'IR') {
-//                     score     = calculateScoreIR(
-//                                     irRoad.ir1Blocked, irRoad.ir2Blocked,
-//                                     piezoHeavy,
-//                                     systemMode === 'BOTH' ? google : 'Unknown'
-//                                 );
-//                     greenTime = calculateGreenTimeIR(
-//                                     irRoad.ir1Blocked, irRoad.ir2Blocked, piezoHeavy
-//                                 );
-//                 } else {
-//                     // ULTRASONIC — only shows for roads with a working ESP32
-//                     score     = calculateScoreUltrasonic(distanceCm, google);
-//                     greenTime = calculateGreenTimeUltrasonic(distanceCm, google);
-//                 }
-//             }
-
-//             // Downed ESP32: exclude from winning
-//             if (!espOnline) {
-//                 score = -9999;
-//             }
-
-//             // Pedestrian override
-//             if (pedRoad.crossing) {
-//                 score    -= 1000;
-//                 greenTime = 0;
-//             } else if (pedRoad.requested) {
-//                 score += 100;
-//             }
-
-//             return {
-//                 road, sensorScenario,
-//                 distance: espOnline && sensorIsWorking ? distanceCm : null,
-//                 ir1Blocked: espOnline ? (irRoad.ir1Blocked  || false) : false,
-//                 ir2Blocked: espOnline ? (irRoad.ir2Blocked  || false) : false,
-//                 piezoHeavy: espOnline ? piezoHeavy : false,
-//                 traffic: google,
-//                 score, greenTime,
-//                 yellowTime: currentYellowTime,
-//                 mode: systemMode,
-//                 pedestrian: pedRoad,
-//                 espOnline
-//             };
-//         });
-//     }
-
-//     priorities.sort((a, b) => b.score - a.score);
-//     const winner = priorities[0];
-
-//     const commands = {};
-//     ROADS.forEach(road => {
-//         commands[road] = road === winner.road
-//             ? { signal: 'GREEN', greenTime: winner.greenTime, yellowTime: currentYellowTime }
-//             : { signal: 'RED',   greenTime: 0, yellowTime: 0 };
-//     });
-
-//     return {
-//         timestamp:      new Date().toISOString(),
-//         mode:           systemMode,
-//         winner:         winner.road,
-//         winnerScenario: winner.sensorScenario,
-//         greenDuration:  winner.greenTime,
-//         yellowDuration: currentYellowTime,
-//         redForOthers:   winner.greenTime + currentYellowTime,
-//         priorities, commands,
-//         dataStatus: { sensorWorking, googleWorking },
-//         weather:    { rainDetected: rainDetected || false, yellowTime: currentYellowTime }
-//     };
-// }
-
-// module.exports = {
-//     makeSignalDecision, selectSensorMode,
-//     calculateGreenTimeUltrasonic, calculateGreenTimeIR,
-//     calculateScoreUltrasonic, calculateScoreIR,
-//     determineSystemMode,
-//     IR_MODE_THRESHOLD, BASE_GREEN_TIME,
-//     LIGHT_TRAFFIC_BONUS, HEAVY_TRAFFIC_BONUS, PIEZO_BONUS,
-//     YELLOW_TIME_DRY, YELLOW_TIME_RAIN,
-//     MIN_GREEN_ULTRASONIC, MAX_GREEN_ULTRASONIC
-// };
-
-
-// server/logic/signalDecision.js — HYDRA v7.0
-// PIEZO FIX:
-//   - Reads piezoData[road].heavy (structured object, not plain boolean)
-//   - IR1 only + Piezo  → 3s base + 3s IR light + 3s piezo  = 9s total
-//   - Both IR  + Piezo  → 3s base + 6s IR heavy + 3s piezo  = 12s total
-//   - Piezo alone (no IR) does NOT contribute — IR check required
-//   - Priority score also boosted when piezo active
-
-const BASE_GREEN_TIME        = 3;
-const BASE_YELLOW_TIME       = 3;
-const RAIN_YELLOW_EXTRA      = 2;
-const LIGHT_TRAFFIC_BONUS    = 3;    // IR1 blocked only
-const HEAVY_TRAFFIC_BONUS    = 6;    // Both IR blocked
-const PIEZO_BONUS            = 3;    // Stacked on top of IR green time (IR must be blocked)
-const SENSOR_MAX_RANGE       = 400;
-const IR_MODE_THRESHOLD      = 20;
-const DEFAULT_GREEN          = 5;
-const MIN_GREEN_ULTRASONIC   = 10;
-const MAX_GREEN_ULTRASONIC   = 60;
-const FALLBACK_GREEN         = 5;
-const YELLOW_TIME_DRY        = BASE_YELLOW_TIME;
-const YELLOW_TIME_RAIN       = BASE_YELLOW_TIME + RAIN_YELLOW_EXTRA;
-
-const IR_SCORE_BASE          = 1000;
-const ULTRASONIC_MAX_SCORE   = 500;
-
-// ── Sensor mode selector ──────────────────────────────────────────────────
+// ── Sensor mode selector ──────────────────────────────────────────────────────
+// Kept for backward-compatibility export; not used in the main path anymore
+// (v8.0 uses ULTRASONIC-with-queue for all online roads).
 function selectSensorMode(distanceCm) {
     if (distanceCm === null || distanceCm === undefined) return 'ULTRASONIC';
     if (distanceCm >= SENSOR_MAX_RANGE) return 'ULTRASONIC';
-    if (distanceCm < IR_MODE_THRESHOLD) return 'IR';
     return 'ULTRASONIC';
 }
 
-// ── Ultrasonic: shorter distance = higher score ───────────────────────────
-function calculateScoreUltrasonic(distanceCm, googleTraffic) {
-    let score = 0;
-    if (distanceCm !== null && distanceCm < SENSOR_MAX_RANGE) {
-        score += (SENSOR_MAX_RANGE - distanceCm);
-    }
-    return Math.min(score, ULTRASONIC_MAX_SCORE);
+// ── Ultrasonic helpers ────────────────────────────────────────────────────────
+function calculateScoreUltrasonic(distanceCm) {
+    if (distanceCm === null || distanceCm >= SENSOR_MAX_RANGE) return 0;
+    return Math.min(SENSOR_MAX_RANGE - distanceCm, ULTRASONIC_MAX_SCORE);
 }
 
 function calculateGreenTimeUltrasonic(distanceCm, googleTraffic) {
@@ -315,6 +93,7 @@ function calculateGreenTimeUltrasonic(distanceCm, googleTraffic) {
     return Math.round(Math.min(Math.max(greenTime, MIN_GREEN_ULTRASONIC), MAX_GREEN_ULTRASONIC));
 }
 
+// Queue-level classifier (used in index.js for ultrasonic stability logic)
 function classifyQueueByUltrasonic(distanceCm) {
     if (distanceCm === null || distanceCm === undefined || distanceCm >= SENSOR_MAX_RANGE) return 'None';
     if (distanceCm <= 100) return 'Heavy';
@@ -326,7 +105,7 @@ function calculateScoreUltrasonicWithQueue(distanceCm, queueLevel, piezoHeavy) {
     let score = calculateScoreUltrasonic(distanceCm);
     if (queueLevel === 'Light') score += 50;
     if (queueLevel === 'Heavy') score += 120;
-    if (piezoHeavy) score += 150;
+    if (piezoHeavy)             score += 150;
     return score;
 }
 
@@ -343,57 +122,44 @@ function calculateGreenTimeUltrasonicWithQueue(distanceCm, queueLevel, piezoHeav
     return Math.round(Math.min(Math.max(greenTime, MIN_GREEN_ULTRASONIC), MAX_GREEN_ULTRASONIC));
 }
 
-// ── IR mode: score starts at IR_SCORE_BASE — always beats ultrasonic ──────
+// ── IR mode helpers ───────────────────────────────────────────────────────────
 //
-// piezoHeavy: boolean derived from piezoData[road].heavy
-// IR must be blocked for piezo to count (enforced in makeSignalDecision
-// before calling this, and also redundantly checked here for safety)
-function calculateScoreIR(ir1Blocked, ir2Blocked, piezoHeavy, googleTraffic) {
+// Green time table:
+//   No IR blocked           →  3s  (base only)
+//   IR1 only, no piezo      →  3 + 3 = 6s
+//   IR1 + piezo             →  3 + 3 + 3 = 9s
+//   Both IR, no piezo       →  3 + 6 = 9s
+//   Both IR + piezo         →  3 + 6 + 3 = 12s
+//   Piezo alone (no IR)     →  3s  (no contribution)
+//
+function calculateScoreIR(ir1Blocked, ir2Blocked, piezoHeavy) {
     let score = IR_SCORE_BASE;
-
     if (ir1Blocked && ir2Blocked) {
         score += 200;
-        if (piezoHeavy) score += 100; // confirmed heavy vehicle on heavy queue
+        if (piezoHeavy) score += 100;
     } else if (ir1Blocked) {
         score += 100;
-        if (piezoHeavy) score += 50;  // confirmed heavy vehicle on light queue
+        if (piezoHeavy) score += 50;
     } else {
-        score += 10; // in IR range, no vehicle in IR zone
+        score += 10;
     }
-
     return score;
 }
 
-// ── IR mode green time (v7.0 corrected stacking) ─────────────────────────
-//
-// Calculation table:
-//   No IR blocked           → 3s  (base only)
-//   IR1 only, no piezo      → 3 + 3 = 6s
-//   IR1 + piezo             → 3 + 3 + 3 = 9s   ← NEW
-//   Both IR, no piezo       → 3 + 6 = 9s
-//   Both IR + piezo         → 3 + 6 + 3 = 12s  ← NEW
-//
-// IMPORTANT: piezo bonus only applies when at least IR1 is blocked.
-// Piezo alone (no IR) returns base green time only.
 function calculateGreenTimeIR(ir1Blocked, ir2Blocked, piezoHeavy) {
-    let greenTime = BASE_GREEN_TIME; // 3s base always
-
+    let greenTime = BASE_GREEN_TIME;
     if (ir1Blocked && ir2Blocked) {
-        greenTime += HEAVY_TRAFFIC_BONUS; // + 6s = 9s
+        greenTime += HEAVY_TRAFFIC_BONUS;
     } else if (ir1Blocked) {
-        greenTime += LIGHT_TRAFFIC_BONUS; // + 3s = 6s
+        greenTime += LIGHT_TRAFFIC_BONUS;
     }
-    // else: no IR blocked → stay at 3s base (piezo cannot help alone)
-
-    // Piezo stacks on top ONLY when at least IR1 is blocked
     if (piezoHeavy && ir1Blocked) {
-        greenTime += PIEZO_BONUS; // + 3s
+        greenTime += PIEZO_BONUS;
     }
-
     return greenTime;
 }
 
-// ── System mode determination ─────────────────────────────────────────────
+// ── System mode determination ─────────────────────────────────────────────────
 function determineSystemMode(sensorWorking, googleWorking) {
     const anySensor = Object.values(sensorWorking || {}).some(v => v === true);
     const google    = googleWorking === true;
@@ -407,59 +173,80 @@ function determineSystemMode(sensorWorking, googleWorking) {
 // MAIN DECISION FUNCTION
 // ════════════════════════════════════════════════════════════════════════════
 //
-// piezoData: { North: { heavy, timestamp, locked }, South: ..., ... }
-//   — heavy=true means a confirmed (IR+vibration) heavy vehicle is waiting
-//   — locked=true means subsequent taps have been suppressed
-//   — The server sets heavy=false and locked=false after the extended green ends
+// Parameters (unchanged from v7.0 so index.js call site needs no edits):
+//   sensorData    — { road: distanceCm }
+//   trafficData   — { road: 'Heavy'|'Medium'|'Light'|'Unknown' }
+//   sensorWorking — { road: boolean }
+//   googleWorking — boolean
+//   queueData     — { road: { queueLevel: 'None'|'Light'|'Heavy' } }
+//   piezoData     — { road: { heavy: boolean, timestamp: number, locked: boolean } }
+//   rainDetected  — boolean
+//   pedStatus     — { road: { requested: boolean, crossing: boolean } }
+//   espStatus     — { road: boolean }
+//
+// NEW in v8.0:
+//   fallbackWinner — string|null  (passed by index.js when allEspDown is true)
+//     When provided, this road is placed first in priorities[] so the
+//     dashboard always reflects the real winner, not North by default.
 //
 function makeSignalDecision(
     sensorData, trafficData, sensorWorking, googleWorking,
-    queueData, piezoData, rainDetected, pedStatus, espStatus
+    queueData, piezoData, rainDetected, pedStatus, espStatus,
+    fallbackWinner   // FIX 1: new optional param — null when sensors are live
 ) {
     const ROADS      = ['North', 'South', 'East', 'West'];
     const systemMode = determineSystemMode(sensorWorking || {}, googleWorking || false);
     const currentYellowTime = rainDetected ? YELLOW_TIME_RAIN : YELLOW_TIME_DRY;
 
-    const queue = queueData || {};
-    const piezo = piezoData || {};
-    const ped   = pedStatus || {};
-    const esp   = espStatus || {};
+    const queue = queueData  || {};
+    const piezo = piezoData  || {};
+    const ped   = pedStatus  || {};
+    const esp   = espStatus  || {};
 
     let priorities = [];
 
+    // ── FALLBACK: no sensors, no Google ──────────────────────────────────────
+    // FIX 1 + FIX 3: use fallbackWinner from index.js rotation, and
+    // getFallbackGreenTime() for time-aware green duration.
     if (systemMode === 'FALLBACK') {
-        priorities = ROADS.map((road, i) => ({
+        const fallbackGreen = getFallbackGreenTime();
+
+        priorities = ROADS.map(road => ({
             road,
-            sensorScenario: 'NO_DATA',
-            distance: null,
-            queueLevel: 'None',
-            piezoHeavy: false,
-            traffic: 'Unknown',
-            score: ROADS.length - i,
-            greenTime: FALLBACK_GREEN,
-            yellowTime: currentYellowTime,
-            mode: 'FALLBACK',
-            espOnline: esp[road] !== false
+            sensorScenario: 'FALLBACK_ROTATION',   // FIX 2: correct badge
+            distance:    null,
+            queueLevel:  'None',
+            piezoHeavy:  false,
+            traffic:     'Unknown',
+            // FIX 1: winner gets highest score so sort puts it first
+            score:       road === fallbackWinner ? 99 : (ROADS.length - ROADS.indexOf(road)),
+            greenTime:   fallbackGreen,             // FIX 3: time-of-day value
+            yellowTime:  currentYellowTime,
+            mode:        'FALLBACK',
+            espOnline:   esp[road] !== false
         }));
 
+    // ── GOOGLE_ONLY: no ESP32 anywhere but Google is working ─────────────────
     } else if (systemMode === 'GOOGLE_ONLY') {
         priorities = ROADS.map(road => {
             const google = (trafficData || {})[road] || 'Unknown';
-            const score  = calculateScoreUltrasonic(null, google);
+            const score  = calculateScoreUltrasonic(null);  // no distance
             const green  = calculateGreenTimeUltrasonic(null, google);
             return {
                 road,
                 sensorScenario: 'GOOGLE_ONLY',
-                distance: null,
+                distance:   null,
                 queueLevel: 'None',
                 piezoHeavy: false,
-                traffic: google, score, greenTime: green,
+                traffic:    google,
+                score, greenTime: green,
                 yellowTime: currentYellowTime,
-                mode: 'GOOGLE_ONLY',
-                espOnline: esp[road] !== false
+                mode:       'GOOGLE_ONLY',
+                espOnline:  esp[road] !== false
             };
         });
 
+    // ── SENSOR_ONLY or BOTH: per-road logic ───────────────────────────────────
     } else {
         priorities = ROADS.map(road => {
             const espOnline       = esp[road] !== false;
@@ -473,21 +260,23 @@ function makeSignalDecision(
             const queueLevel = (queue[road] || {}).queueLevel || 'None';
 
             const piezoRoad  = piezo[road] || { heavy: false, timestamp: 0, locked: false };
-            const piezoHeavy = (piezoRoad.heavy === true) && distanceCm !== null;
+            // Piezo only counts when a vehicle is confirmed near the stop line
+            const piezoHeavy = (piezoRoad.heavy === true) && (distanceCm !== null);
 
-            const pedRoad = ped[road] || { requested: false, crossing: false };
+            const pedRoad    = ped[road] || { requested: false, crossing: false };
 
             let sensorScenario, score, greenTime;
 
             if (!espOnline || !sensorIsWorking) {
+                // This road's ESP32 is offline — fall back per-road
                 if (googleWorking) {
                     sensorScenario = 'GOOGLE_ONLY';
-                    score          = calculateScoreUltrasonic(null, google);
+                    score          = calculateScoreUltrasonic(null);
                     greenTime      = calculateGreenTimeUltrasonic(null, google);
                 } else {
                     sensorScenario = 'NO_DATA';
                     score          = ROADS.length - ROADS.indexOf(road);
-                    greenTime      = FALLBACK_GREEN;
+                    greenTime      = getFallbackGreenTime(); // FIX 3: consistent
                 }
             } else {
                 sensorScenario = 'ULTRASONIC';
@@ -495,10 +284,8 @@ function makeSignalDecision(
                 greenTime      = calculateGreenTimeUltrasonicWithQueue(distanceCm, queueLevel, piezoHeavy, google);
             }
 
-            // Downed ESP32: exclude from winning
-            if (!espOnline) {
-                score = -9999;
-            }
+            // Downed ESP32: exclude from winning entirely
+            if (!espOnline) score = -9999;
 
             // Pedestrian override
             if (pedRoad.crossing) {
@@ -510,21 +297,21 @@ function makeSignalDecision(
 
             return {
                 road, sensorScenario,
-                distance:   espOnline && sensorIsWorking ? distanceCm : null,
-                queueLevel: espOnline && sensorIsWorking ? queueLevel : 'None',
-                piezoHeavy: espOnline ? piezoHeavy          : false,
-                // Expose piezo timestamp so dashboard can show "tap X minutes ago" if desired
+                distance:       espOnline && sensorIsWorking ? distanceCm : null,
+                queueLevel:     espOnline && sensorIsWorking ? queueLevel : 'None',
+                piezoHeavy:     espOnline ? piezoHeavy : false,
                 piezoTimestamp: piezoRoad.timestamp || 0,
-                traffic: google,
+                traffic:        google,
                 score, greenTime,
-                yellowTime: currentYellowTime,
-                mode: systemMode,
-                pedestrian: pedRoad,
+                yellowTime:  currentYellowTime,
+                mode:        systemMode,
+                pedestrian:  pedRoad,
                 espOnline
             };
         });
     }
 
+    // Sort highest score first
     priorities.sort((a, b) => b.score - a.score);
     const winner = priorities[0];
 
@@ -549,15 +336,22 @@ function makeSignalDecision(
     };
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// EXPORTS
+// ════════════════════════════════════════════════════════════════════════════
 module.exports = {
     makeSignalDecision,
+    // Helpers (used by index.js for queue classification)
+    classifyQueueByUltrasonic,
     calculateGreenTimeUltrasonic,
     calculateScoreUltrasonic,
     determineSystemMode,
-    // Constants — exported for tests and dashboard display
+    getFallbackGreenTime,
+    // Constants — dashboard and tests import these
     BASE_GREEN_TIME,
     LIGHT_TRAFFIC_BONUS, HEAVY_TRAFFIC_BONUS, PIEZO_BONUS,
     YELLOW_TIME_DRY, YELLOW_TIME_RAIN,
     MIN_GREEN_ULTRASONIC, MAX_GREEN_ULTRASONIC,
-    SENSOR_MAX_RANGE
+    SENSOR_MAX_RANGE,
+    FALLBACK_GREEN_SCHEDULE
 };
