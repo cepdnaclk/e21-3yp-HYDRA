@@ -202,10 +202,10 @@ export default function UserDashboard({ user, onLogout }) {
 
     const socketRef = useRef(null);
 
-    const showNotif = (msg, type = 'info') => {
-        setNotification({ msg, type });
-        setTimeout(() => setNotification(null), 4000);
-    };
+    // const showNotif = (msg, type = 'info') => {
+    //     setNotification({ msg, type });
+    //     setTimeout(() => setNotification(null), 4000);
+    // };
 
     useEffect(() => {
         const socket = io(SERVER, { transports: ['websocket', 'polling'] });

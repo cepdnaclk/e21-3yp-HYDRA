@@ -1,3 +1,4 @@
+// client/src/pages/AdminLogin.js
 import React, { useState } from 'react';
 import { auth, signInWithEmailAndPassword } from '../firebase';
 import { useNavigate } from 'react-router-dom';
@@ -15,23 +16,21 @@ export default function AdminLogin() {
     setError('');
     
     try {
-      // Try to login with email/password
-      const result = await signInWithEmailAndPassword(auth, email, password);
+      // Remove the 'result' variable or use void to ignore
+      await signInWithEmailAndPassword(auth, email, password);
       
       // List of authorized admin emails (only these can access admin panel)
       const authorizedAdmins = [
         'admin@hydra.traffic',  
         'admin@hydra.com',
         'admin@hydra-traffic.com',
-        'your-email@gmail.com'  // Add your email here
+        'your-email@gmail.com'
       ];
       
       // Check if the logged-in email is in the authorized admin list
       if (authorizedAdmins.includes(email)) {
-        // Success! Redirect to admin dashboard
         navigate('/admin-dashboard');
       } else {
-        // Not an admin - sign them out and show error
         await auth.signOut();
         setError('Access denied. You are not authorized as an administrator.');
       }
