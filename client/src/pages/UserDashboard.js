@@ -202,10 +202,7 @@ export default function UserDashboard({ user, onLogout }) {
 
     const socketRef = useRef(null);
 
-    const showNotif = (msg, type = 'info') => {
-        setNotification({ msg, type });
-        setTimeout(() => setNotification(null), 4000);
-    };
+    // showNotif function removed - not used in UserDashboard
 
     useEffect(() => {
         const socket = io(SERVER, { transports: ['websocket', 'polling'] });
