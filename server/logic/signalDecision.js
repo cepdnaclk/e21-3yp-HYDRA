@@ -287,12 +287,10 @@ function makeSignalDecision(
             // Downed ESP32: exclude from winning entirely
             if (!espOnline) score = -9999;
 
-            // Pedestrian override
+            // If pedestrians are currently crossing on this road, keep it out of green selection.
             if (pedRoad.crossing) {
                 score    -= 1000;
                 greenTime = 0;
-            } else if (pedRoad.requested) {
-                score += 100;
             }
 
             return {

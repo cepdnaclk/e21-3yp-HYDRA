@@ -117,19 +117,28 @@ const char* SUB_RAIN_ALL = "traffic/rain/all";  // Rain broadcast from North
 WiFiClient   wifiClient;
 PubSubClient mqttClient(wifiClient);
 
-// ── ULTRASONIC STABILITY TRACKING ────────────────────────────────────────────
+// ── ULTRASONIC STABILITY TRACKING (±7cm tolerance for 10 seconds) ────────────
 struct UltrasonicState {
+    // US1 (Stop Line, 0-100cm detection)
     bool   us1Blocked = false;
-    bool   us2Blocked = false;
     bool   us1Stable = false;
-    bool   us2Stable = false;
     unsigned long us1BlockStartMs = 0;
-    unsigned long us2BlockStartMs = 0;
+    float  us1InitialDist = 0;      // Distance when first blocked
     float  us1LastDist = 0;
+    
+    // US2 (Queue Detection, 3-4m behind stop line)
+    bool   us2Blocked = false;
+    bool   us2Stable = false;
+    unsigned long us2BlockStartMs = 0;
+    float  us2InitialDist = 0;      // Distance when first blocked
     float  us2LastDist = 0;
 };
 
 UltrasonicState usState;
+
+// ── STABILITY TOLERANCE ────────────────────────────────────────────────────────
+#define DISTANCE_VARIATION_CM   7    // ±7cm tolerance for stable detection
+#define STABILITY_CHECK_INTERVAL_MS 500  // Check every 500ms
 
 // ── LIGHT STATE MACHINE ───────────────────────────────────────────────────────
 enum LightPhase { PHASE_RED, PHASE_YELLOW, PHASE_GREEN };
@@ -241,68 +250,112 @@ void updateUltrasonicState() {
     bool us1CurrentlyBlocked = (us1Dist < US1_STOP_LINE_THRESHOLD_CM);
     bool us2CurrentlyBlocked = (us2Dist < US2_QUEUE_THRESHOLD_CM);
     
-    // ── US1 Stability Check ────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────
+    // US1 STABILITY CHECK (±7cm tolerance for 10 seconds)
+    // ──────────────────────────────────────────────────────────────────────
     if (us1CurrentlyBlocked) {
         if (!usState.us1Blocked) {
-            // Just became blocked - start timer
+            // Just became blocked - start tracking
             usState.us1BlockStartMs = now;
+            usState.us1InitialDist = us1Dist;
             usState.us1Stable = false;
-            Serial.printf("📡 US1 BLOCKED START - distance: %.1f cm (stability timer started)\n", us1Dist);
+            usState.us1Blocked = true;
+            Serial.printf("[US1] 📡 BLOCKED - distance: %.1f cm (stability timer started)\n", us1Dist);
         } else {
-            // Check if stable period has passed
-            if (!usState.us1Stable && (now - usState.us1BlockStartMs) >= STABILITY_REQUIRED_MS) {
-                usState.us1Stable = true;
-                Serial.printf("✅ US1 STABLE for 10 seconds - LIGHT TRAFFIC DETECTED\n");
+            // Check if reading is within ±7cm of initial distance
+            float distVariation = abs(us1Dist - usState.us1InitialDist);
+            
+            if (distVariation > DISTANCE_VARIATION_CM) {
+                // Reading deviated too much - reset stability timer
+                usState.us1BlockStartMs = now;
+                usState.us1InitialDist = us1Dist;
+                usState.us1Stable = false;
+                Serial.printf("[US1] ⚠️  VARIATION RESET - distance: %.1f cm (deviation: %.1f cm > ±%d cm)\n", 
+                             us1Dist, distVariation, DISTANCE_VARIATION_CM);
+            } else {
+                // Reading is stable - check if 10 seconds passed
+                unsigned long stableTime = now - usState.us1BlockStartMs;
+                if (!usState.us1Stable && stableTime >= STABILITY_REQUIRED_MS) {
+                    usState.us1Stable = true;
+                    Serial.printf("[US1] ✅ STABLE for 10 seconds - LIGHT TRAFFIC DETECTED\n");
+                    Serial.printf("     Distance: %.1f cm ± %.1f cm (tolerance: ±%d cm)\n", 
+                                 us1Dist, distVariation, DISTANCE_VARIATION_CM);
+                }
             }
         }
-        usState.us1Blocked = true;
     } else {
         if (usState.us1Blocked) {
             // Vehicle left - reset
-            Serial.printf("📡 US1 CLEARED - distance: %.1f cm\n", us1Dist);
+            Serial.printf("[US1] 📡 CLEARED - distance: %.1f cm\n", us1Dist);
             usState.us1Blocked = false;
             usState.us1Stable = false;
             usState.us1BlockStartMs = 0;
+            usState.us1InitialDist = 0;
         }
     }
     
-    // ── US2 Stability Check ────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────
+    // US2 STABILITY CHECK (±7cm tolerance for 10 seconds)
+    // ──────────────────────────────────────────────────────────────────────
     if (us2CurrentlyBlocked) {
         if (!usState.us2Blocked) {
+            // Just became blocked - start tracking
             usState.us2BlockStartMs = now;
+            usState.us2InitialDist = us2Dist;
             usState.us2Stable = false;
-            Serial.printf("📡 US2 BLOCKED START - distance: %.1f cm\n", us2Dist);
+            usState.us2Blocked = true;
+            Serial.printf("[US2] 📡 BLOCKED - distance: %.1f cm (stability timer started)\n", us2Dist);
         } else {
-            if (!usState.us2Stable && (now - usState.us2BlockStartMs) >= STABILITY_REQUIRED_MS) {
-                usState.us2Stable = true;
-                Serial.printf("✅ US2 STABLE for 10 seconds - HEAVY TRAFFIC DETECTED\n");
+            // Check if reading is within ±7cm of initial distance
+            float distVariation = abs(us2Dist - usState.us2InitialDist);
+            
+            if (distVariation > DISTANCE_VARIATION_CM) {
+                // Reading deviated too much - reset stability timer
+                usState.us2BlockStartMs = now;
+                usState.us2InitialDist = us2Dist;
+                usState.us2Stable = false;
+                Serial.printf("[US2] ⚠️  VARIATION RESET - distance: %.1f cm (deviation: %.1f cm > ±%d cm)\n", 
+                             us2Dist, distVariation, DISTANCE_VARIATION_CM);
+            } else {
+                // Reading is stable - check if 10 seconds passed
+                unsigned long stableTime = now - usState.us2BlockStartMs;
+                if (!usState.us2Stable && stableTime >= STABILITY_REQUIRED_MS) {
+                    usState.us2Stable = true;
+                    Serial.printf("[US2] ✅ STABLE for 10 seconds - HEAVY TRAFFIC DETECTED\n");
+                    Serial.printf("     Distance: %.1f cm ± %.1f cm (tolerance: ±%d cm)\n", 
+                                 us2Dist, distVariation, DISTANCE_VARIATION_CM);
+                }
             }
         }
-        usState.us2Blocked = true;
     } else {
         if (usState.us2Blocked) {
-            Serial.printf("📡 US2 CLEARED - distance: %.1f cm\n", us2Dist);
+            // Vehicle left - reset
+            Serial.printf("[US2] 📡 CLEARED - distance: %.1f cm\n", us2Dist);
             usState.us2Blocked = false;
             usState.us2Stable = false;
             usState.us2BlockStartMs = 0;
+            usState.us2InitialDist = 0;
         }
     }
     
-    // Store last distances for publishing
+    // Store distances for publishing
     usState.us1LastDist = us1Dist;
     usState.us2LastDist = us2Dist;
     
-    // Determine traffic level based on STABLE readings
+    // ──────────────────────────────────────────────────────────────────────
+    // DETERMINE TRAFFIC LEVEL (based on STABLE readings only)
+    // ──────────────────────────────────────────────────────────────────────
     String newTrafficLevel = "None";
     if (usState.us1Stable && usState.us2Stable) {
         newTrafficLevel = "Heavy";
-    } else if (usState.us1Stable) {
+    } else if (usState.us1Stable && !usState.us2Stable) {
         newTrafficLevel = "Light";
     }
+    // Note: US2 stable without US1 stable = no traffic extension
     
     if (newTrafficLevel != currentTrafficLevel) {
         currentTrafficLevel = newTrafficLevel;
-        Serial.printf("🚦 TRAFFIC LEVEL CHANGED: %s\n", currentTrafficLevel.c_str());
+        Serial.printf("🚦 EAST TRAFFIC LEVEL: %s\n", currentTrafficLevel.c_str());
     }
 }
 

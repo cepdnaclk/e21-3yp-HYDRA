@@ -148,9 +148,10 @@ let pedCrossingTimers = {};
 let greenTime = { North: 3, South: 3, East: 3, West: 3 };
 let redTime   = 3;
 
-// ── FIX 4: Fallback rotation — only used to compute fallbackWinner ────────
-const FALLBACK_ROTATION_ORDER = ['North', 'East', 'South', 'West'];
-let fallbackRotationIndex     = 0;
+// ── STRICT ROUND-ROBIN ORDER (N → S → E → W → repeat) ──────────────────
+// This ensures fairness and prevents any road from being starved
+const ROTATION_ORDER          = ['North', 'South', 'East', 'West'];
+let currentRotationIndex      = 0;  // Tracks which road gets green next in rotation
 
 // ── FIX 3: ESP32 health — 3-minute timeout (was 20 minutes) ──────────────
 const ESP32_TIMEOUT_MS = 3 * 60 * 1000;
@@ -403,17 +404,43 @@ function sendCommandToRoad(road, signal, greenDuration, yellowOverride, dynamicR
 function decideNextWinner() {
     const allEspDown = Object.values(espOnline).every(online => online === false);
 
-    // Compute fallback winner before calling makeSignalDecision so it can
-    // sort the priorities array correctly from the start.
-    let fallbackWinner = null;
-    if (allEspDown) {
-        fallbackWinner = FALLBACK_ROTATION_ORDER[fallbackRotationIndex];
-        fallbackRotationIndex = (fallbackRotationIndex + 1) % FALLBACK_ROTATION_ORDER.length;
-        console.log(`↪️  All ESP32 offline — fallback rotation selects ${fallbackWinner} ` +
-                    `(next: ${FALLBACK_ROTATION_ORDER[fallbackRotationIndex]})`);
+    // ───────────────────────────────────────────────────────────────────────
+    // PRIORITY DECISION LOGIC
+    // Priority Order: 1) Pedestrian  2) Heavy Traffic  3) Round-Robin
+    // ───────────────────────────────────────────────────────────────────────
+    
+    // Base winner from round-robin rotation
+    let baseWinner = ROTATION_ORDER[currentRotationIndex];
+    let fallbackWinner = baseWinner;
+    let priorityReason = '';
+    
+    // PRIORITY DECISION: Heavy traffic first, then strict rotation.
+    // Pedestrian requests do not override green cycles; they may start
+    // crossing only when the road is already RED.
+    const roadsWithHeavyTraffic = ROTATION_ORDER.filter(road => {
+        const queue = queueData[road] || {};
+        return queue.queueLevel === 'Heavy';
+    });
+    
+    if (roadsWithHeavyTraffic.length > 0) {
+        // Heavy traffic detected - prioritize it
+        if (roadsWithHeavyTraffic.includes(baseWinner)) {
+            fallbackWinner = baseWinner;
+            priorityReason = `🔴 HEAVY TRAFFIC PRIORITY (was already next in rotation)`;
+        } else {
+            fallbackWinner = roadsWithHeavyTraffic[0];
+            priorityReason = `🔴 HEAVY TRAFFIC PRIORITY (queue detected, moved forward)`;
+        }
+    } else {
+        priorityReason = `↪️ Strict Round-Robin: ${baseWinner}`;
     }
+    
+    console.log(`${priorityReason} (rotation index: ${currentRotationIndex})`);
+    
+    // Advance rotation index for NEXT cycle (regardless of override)
+    currentRotationIndex = (currentRotationIndex + 1) % ROTATION_ORDER.length;
 
-    // FIX 1: pass fallbackWinner as the new 10th argument
+    // Call signal decision with the selected winner
     latestDecision = makeSignalDecision(
         sensorData,
         googleTraffic,
@@ -424,10 +451,10 @@ function decideNextWinner() {
         rainDetected,
         pedStatus,
         espOnline,
-        fallbackWinner   // null when sensors are live; rotation winner when all down
+        fallbackWinner   // The winner (from round-robin or pedestrian override)
     );
 
-    // Ensure greenDuration on the decision object is populated
+    // Ensure duration fields are set
     if (latestDecision && latestDecision.winner) {
         latestDecision.greenDuration  = latestDecision.greenDuration  || greenTime[latestDecision.winner] || 5;
         latestDecision.yellowDuration = latestDecision.yellowDuration || yellowTime;
