@@ -886,7 +886,7 @@
 // }
 
 
-// client/src/pages/UserDashboard.js - FULLY FIXED
+// client/src/pages/UserDashboard.js - CLEANED VERSION
 // HYDRA Dashboard - USER VERSION (No Traffic Police Override)
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -894,7 +894,6 @@ import io from 'socket.io-client';
 import axios from 'axios';
 
 const SERVER = 'http://56.228.30.50:5000';
-const ROADS  = ['North', 'South', 'East', 'West'];
 
 // ── Traffic light bulb ────────────────────────────────────────────────────────
 const Bulb = ({ color, active, size = 36 }) => {
@@ -914,153 +913,16 @@ const Bulb = ({ color, active, size = 36 }) => {
     );
 };
 
-const PedBulb = ({ color, active, size = 28 }) => {
-    const C = {
-        RED:   { on: '#ef4444', off: '#3a0000', glow: '#ef4444' },
-        GREEN: { on: '#22c55e', off: '#003310', glow: '#22c55e' },
-    };
-    const c = C[color];
-    return (
-        <div style={{
-            width: size, height: size, borderRadius: '50%',
-            background: active ? c.on : c.off,
-            boxShadow: active ? `0 0 12px ${c.glow}` : 'none',
-            transition: 'all 0.3s ease'
-        }} />
-    );
-};
-
-const TrafficBadge = ({ level }) => {
-    const M = {
-        Heavy:   { bg: '#7f1d1d', color: '#f87171', border: '#ef4444' },
-        Medium:  { bg: '#713f12', color: '#fde047', border: '#f59e0b' },
-        Light:   { bg: '#14532d', color: '#4ade80', border: '#22c55e' },
-        Unknown: { bg: '#1e293b', color: '#64748b', border: '#334155' },
-    };
-    const s = M[level] || M.Unknown;
-    return (
-        <span style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}`,
-            padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 'bold' }}>
-            {level || 'Unknown'}
-        </span>
-    );
-};
-
-const ScenarioBadge = ({ scenario }) => {
-    const M = {
-        QUEUE_HEAVY_PIEZO: { bg: '#3d1000', color: '#fb923c', border: '#f59e0b', icon: '🚛🔴', label: 'HEAVY+PIEZO' },
-        QUEUE_HEAVY:       { bg: '#7f1d1d', color: '#f87171', border: '#ef4444', icon: '🔴', label: 'HEAVY QUEUE' },
-        QUEUE_LIGHT_PIEZO: { bg: '#3d2000', color: '#fb923c', border: '#f59e0b', icon: '🚛🟡', label: 'LIGHT+PIEZO' },
-        QUEUE_LIGHT:       { bg: '#713f12', color: '#fde047', border: '#f59e0b', icon: '🟡', label: 'LIGHT QUEUE' },
-        QUEUE_NONE:        { bg: '#14532d', color: '#4ade80', border: '#22c55e', icon: '🟢', label: 'NO QUEUE' },
-        GOOGLE_ONLY:       { bg: '#1e293b', color: '#94a3b8', border: '#475569', icon: '🗺️', label: 'GOOGLE ONLY' },
-        NO_DATA:           { bg: '#1e1e1e', color: '#6b7280', border: '#374151', icon: '❌', label: 'NO DATA' },
-        FALLBACK:          { bg: '#3d2000', color: '#fb923c', border: '#f59e0b', icon: '⚠️', label: 'FALLBACK' },
-    };
-    const s = M[scenario] || M.FALLBACK;
-    return (
-        <span style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}`,
-            padding: '2px 8px', borderRadius: 8, fontSize: 10, fontWeight: 'bold',
-            display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            {s.icon} {s.label}
-        </span>
-    );
-};
-
-const QueueBadge = ({ us1Stable, us2Stable }) => {
-    let bg, color, icon, label;
-    if (us1Stable && us2Stable) { bg='#7f1d1d'; color='#f87171'; icon='🔴'; label='HEAVY (+6s)'; }
-    else if (us1Stable)          { bg='#713f12'; color='#fde047'; icon='🟡'; label='LIGHT (+3s)'; }
-    else                         { bg='#14532d'; color='#4ade80'; icon='🟢'; label='NO TRAFFIC'; }
-    return (
-        <div style={{ background: bg, color, border: `1px solid ${color}44`,
-            padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 'bold',
-            display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            {icon} {label}
-        </div>
-    );
-};
-
-const PedWidget = ({ ped, mainPhase, mainCountdown }) => {
-    const isCrossing = ped?.crossing === true;
-    const isWaiting  = ped?.requested === true && !isCrossing;
-    let cd = null, label = 'IDLE', labelColor = '#475569';
-    if (isCrossing)                  { cd = ped.duration > 0 ? ped.duration : null; label = 'CROSSING'; labelColor = '#22c55e'; }
-    else if (isWaiting && mainPhase === 'RED')   { cd = mainCountdown > 0 ? mainCountdown : null; label = 'WAIT (RED)'; labelColor = '#fde047'; }
-    else if (isWaiting && mainPhase === 'YELLOW'){ cd = mainCountdown > 0 ? mainCountdown : null; label = 'WAIT (YEL)'; labelColor = '#fde047'; }
-    else if (isWaiting && mainPhase === 'GREEN') { cd = mainCountdown > 0 ? mainCountdown : null; label = 'WAIT (GRN)'; labelColor = '#f87171'; }
-    return (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-            <div style={{ fontSize: 9, color: '#64748b', letterSpacing: 1 }}>PED</div>
-            <div style={{ background: '#111', padding: '8px 7px', borderRadius: 12,
-                border: `2px solid ${isCrossing ? '#22c55e44' : '#2a2a2a'}`,
-                display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <PedBulb color="RED"   active={!isCrossing} size={26} />
-                <PedBulb color="GREEN" active={isCrossing}  size={26} />
-            </div>
-            {cd !== null && (
-                <div style={{ background: isCrossing ? '#14532d' : '#3d2000',
-                    color: isCrossing ? '#4ade80' : '#fde047',
-                    borderRadius: 6, padding: '2px 8px', fontSize: 13, fontWeight: 'bold', minWidth: 32, textAlign: 'center' }}>
-                    {cd}s
-                </div>
-            )}
-            <div style={{ fontSize: 9, color: labelColor, fontWeight: 'bold', textAlign: 'center', maxWidth: 52 }}>
-                {label}
-            </div>
-        </div>
-    );
-};
-
 // ── Main User Dashboard ──────────────────────────────────────────────────────
 export default function UserDashboard({ user, onLogout }) {
     const [livePhase,   setLivePhase]   = useState({ North:'RED', South:'RED', East:'RED', West:'RED' });
     const [liveCD,      setLiveCD]      = useState({ North:0, South:0, East:0, West:0 });
-    const [usData,      setUsData]      = useState({
-        North: { us1Stable:false, us2Stable:false, us1Raw:999, us2Raw:999 },
-        South: { us1Stable:false, us2Stable:false, us1Raw:999, us2Raw:999 },
-        East:  { us1Stable:false, us2Stable:false, us1Raw:999, us2Raw:999 },
-        West:  { us1Stable:false, us2Stable:false, us1Raw:999, us2Raw:999 }
-    });
-    const [usWorking,   setUsWorking]   = useState({});
-    const [googleTraffic, setGoogleTraffic] = useState({ North:'Unknown', South:'Unknown', East:'Unknown', West:'Unknown' });
-    const [googleWorking, setGoogleWorking] = useState(false);
-    const [piezoData,   setPiezoData]   = useState({
-        North:{heavy:false,timestamp:0,locked:false},
-        South:{heavy:false,timestamp:0,locked:false},
-        East: {heavy:false,timestamp:0,locked:false},
-        West: {heavy:false,timestamp:0,locked:false}
-    });
-    const [rainDetected,setRainDetected]= useState(false);
-    const [yellowTime,  setYellowTime]  = useState(3);
-    const [redTime,     setRedTime]     = useState(0);
-    const [greenTime,   setGreenTime]   = useState({ North:3, South:3, East:3, West:3 });
-    const [pedStatus,   setPedStatus]   = useState({});
     const [decision,    setDecision]    = useState(null);
     const [connected,   setConnected]   = useState(false);
-    const [espOnline,   setEspOnline]   = useState({ North:true, South:true, East:true, West:true });
-    const [heavyActive, setHeavyActive] = useState({ North:false, South:false, East:false, West:false });
-    const [analyticsTab, setAnalyticsTab] = useState('livecongestion');
-    const [analyticsData, setAnalyticsData] = useState({ peakHours:[], roadPerf:[], efficiency:{} });
+    const [rainDetected, setRainDetected] = useState(false);
+    const [yellowTime,  setYellowTime]  = useState(3);
 
     const socketRef = useRef(null);
-
-    // ✅ FIX: Define showNotif function
-    const showNotif = (message, type = 'info') => {
-        // Simple console logging (since we removed toast dependency)
-        if (type === 'error') {
-            console.error(message);
-        } else if (type === 'success') {
-            console.log('✅', message);
-        } else {
-            console.log('📢', message);
-        }
-        // Optional: You can add a simple alert for errors
-        if (type === 'error') {
-            // Uncomment if you want popup errors
-            // alert(message);
-        }
-    };
 
     useEffect(() => {
         const socket = io(SERVER, { transports: ['websocket','polling'] });
@@ -1071,55 +933,28 @@ export default function UserDashboard({ user, onLogout }) {
         socket.on('fullState', data => {
             if (data.livePhase)     setLivePhase(data.livePhase);
             if (data.liveCountdown) setLiveCD(data.liveCountdown);
-            if (data.usData)        setUsData(data.usData);
-            if (data.usWorking)     setUsWorking(data.usWorking);
-            if (data.googleTraffic) setGoogleTraffic(data.googleTraffic);
-            if (data.googleWorking !== undefined) setGoogleWorking(data.googleWorking);
-            if (data.piezoData)     setPiezoData(data.piezoData);
-            if (data.rainDetected !== undefined) { setRainDetected(data.rainDetected); setYellowTime(data.rainDetected ? 5 : 3); }
-            if (data.redTime !== undefined)  setRedTime(data.redTime);
-            if (data.greenTime)     setGreenTime(data.greenTime);
-            if (data.pedStatus)     setPedStatus(data.pedStatus);
-            if (data.espOnline)     setEspOnline(data.espOnline);
-            if (data.heavyVehicleActive) setHeavyActive(data.heavyVehicleActive);
             if (data.latestDecision) setDecision(data.latestDecision);
+            if (data.rainDetected !== undefined) { 
+                setRainDetected(data.rainDetected); 
+                setYellowTime(data.rainDetected ? 5 : 3); 
+            }
         });
 
-        socket.on('countdown',      ({ road, phase, remaining }) => {
+        socket.on('countdown', ({ road, phase, remaining }) => {
             setLiveCD(p => ({ ...p, [road]: remaining }));
             setLivePhase(p => ({ ...p, [road]: phase }));
         });
         socket.on('ledStateUpdate', ({ road, state }) => setLivePhase(p => ({ ...p, [road]: state })));
         socket.on('newDecision',    dec => setDecision(dec));
-        socket.on('usUpdate',       ({ road, us1Stable, us2Stable, us1Raw, us2Raw, queueLevel }) => {
-            setUsData(prev => ({ ...prev, [road]: { us1Stable, us2Stable, us1Raw, us2Raw } }));
-            setUsWorking(prev => ({ ...prev, [road]: true }));
+        socket.on('rainUpdate', ({ rainDetected: r }) => { 
+            setRainDetected(r); 
+            setYellowTime(r ? 5 : 3); 
         });
-        socket.on('piezoUpdate', ({ road, heavyVehicle }) => {
-            setPiezoData(prev => ({ ...prev, [road]: { ...prev[road], heavy: heavyVehicle, locked: heavyVehicle } }));
-            setHeavyActive(prev => ({ ...prev, [road]: heavyVehicle }));
-        });
-        socket.on('rainUpdate',         ({ rainDetected: r }) => { setRainDetected(r); setYellowTime(r ? 5 : 3); });
-        socket.on('pedestrianUpdate',   ({ road, ...rest }) => setPedStatus(p => ({ ...p, [road]: rest })));
-        socket.on('googleTrafficUpdate',({ googleTraffic: gt, googleWorking: gw }) => { setGoogleTraffic(gt); setGoogleWorking(gw); });
-        socket.on('espStatusUpdate',    ({ road, online }) => setEspOnline(prev => ({ ...prev, [road]: online })));
-        socket.on('heavyVehicleUpdate', ({ road, active }) => setHeavyActive(prev => ({ ...prev, [road]: active })));
-        socket.on('analyticsUpdate',    data => setAnalyticsData({ peakHours: data.peakHours||[], roadPerf: data.roadPerf||[], efficiency: data.efficiency||{} }));
-
-        axios.get(`${SERVER}/api/analytics/road-performance`).then(r => setAnalyticsData(p => ({...p, roadPerf: r.data}))).catch(()=>{});
-        axios.get(`${SERVER}/api/analytics/peak-hours`).then(r => setAnalyticsData(p => ({...p, peakHours: r.data}))).catch(()=>{});
-        axios.get(`${SERVER}/api/analytics/system-efficiency`).then(r => setAnalyticsData(p => ({...p, efficiency: r.data}))).catch(()=>{});
 
         return () => socket.disconnect();
     }, []);
 
-    const winner    = decision?.winner;
-    const redOthers = decision?.redForOthers || redTime || 0;
-    const scenarioMap = {};
-    if (decision?.priorities) decision.priorities.forEach(p => { scenarioMap[p.road] = p.sensorScenario; });
-    const decisionGreenMap = {};
-    if (decision?.priorities) decision.priorities.forEach(p => { decisionGreenMap[p.road] = p.greenTime; });
-    const activeSensors = Object.values(usWorking).filter(Boolean).length;
+    const winner = decision?.winner;
 
     return (
         <div style={{ padding: 20, fontFamily: "'Segoe UI', sans-serif", background: '#0a0f1e', minHeight: '100vh', color: 'white' }}>
@@ -1143,7 +978,7 @@ export default function UserDashboard({ user, onLogout }) {
             {/* Header */}
             <div style={{ textAlign:'center', marginBottom:24 }}>
                 <h1 style={{ fontSize:'2.2rem', margin:'0 0 4px', letterSpacing:2 }}>🚦 H.Y.D.R.A Control Center</h1>
-                <p style={{ color:'#475569', margin:0, fontSize:13 }}>Nawinna Junction, Kurunegala — Dual Ultrasonic Queue Detection</p>
+                <p style={{ color:'#475569', margin:0, fontSize:13 }}>Nawinna Junction, Kurunegala — Real-time Adaptive Signal Management</p>
                 <div style={{ marginTop:10, display:'flex', justifyContent:'center', gap:10, flexWrap:'wrap', alignItems:'center' }}>
                     <span style={{ background:connected?'#14532d':'#7f1d1d', color:connected?'#4ade80':'#f87171', padding:'3px 12px', borderRadius:20, fontSize:12, fontWeight:'bold' }}>
                         {connected ? '● LIVE' : '● OFFLINE'}
@@ -1154,12 +989,6 @@ export default function UserDashboard({ user, onLogout }) {
                     <span style={{ background:rainDetected?'#1e3a5f':'#14532d', color:rainDetected?'#60a5fa':'#4ade80',
                         border:`1px solid ${rainDetected?'#3b82f6':'#22c55e'}`, padding:'3px 12px', borderRadius:20, fontSize:12, fontWeight:'bold' }}>
                         {rainDetected ? `🌧️ RAIN — Yellow: ${yellowTime}s` : `☀️ DRY — Yellow: ${yellowTime}s`}
-                    </span>
-                    <span style={{ background:'#1e293b', color:'#94a3b8', padding:'3px 12px', borderRadius:20, fontSize:12 }}>
-                        📡 Sensors: {activeSensors}/4
-                    </span>
-                    <span style={{ background:'#1e293b', color:'#94a3b8', padding:'3px 12px', borderRadius:20, fontSize:12 }}>
-                        🗺️ Google: {googleWorking ? 'Active' : 'Disabled'}
                     </span>
                 </div>
             </div>
@@ -1172,7 +1001,6 @@ export default function UserDashboard({ user, onLogout }) {
                         <div style={{ flex:1 }}>
                             <div style={{ fontWeight:'bold', fontSize:'1.05rem' }}>
                                 Priority: <span style={{ color:'#4ade80' }}>{decision.winner} Road → GREEN ({decision.greenDuration}s)</span>
-                                {decision.winnerScenario && <span style={{ marginLeft:10 }}><ScenarioBadge scenario={decision.winnerScenario} /></span>}
                             </div>
                             <div style={{ color:'#94a3b8', fontSize:12, marginTop:4 }}>
                                 🟡 Yellow: {decision.yellowDuration || yellowTime}s
@@ -1180,7 +1008,6 @@ export default function UserDashboard({ user, onLogout }) {
                                 🔴 Others RED: <strong style={{ color:'#f87171' }}>{decision.redForOthers}s</strong>
                                 &nbsp;| Mode: {decision.mode}
                             </div>
-                            {rainDetected && <div style={{ color:'#60a5fa', fontSize:11, marginTop:4 }}>🌧️ Rain — Yellow extended to {yellowTime}s</div>}
                         </div>
                         <div style={{ display:'flex', gap:10 }}>
                             {['RED','YELLOW','GREEN'].map(c => (
@@ -1196,8 +1023,55 @@ export default function UserDashboard({ user, onLogout }) {
                 </div>
             )}
 
-            {/* Rest of the component remains the same as your UserDashboard code */}
-            {/* ... (keep all your existing JSX from line 450 onwards) ... */}
+            {/* Simple Road Status Display */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))', gap:16, marginBottom:22 }}>
+                {['North', 'South', 'East', 'West'].map(road => {
+                    const phase = livePhase[road] || 'RED';
+                    const count = liveCD[road] || 0;
+                    const isWin = winner === road;
+                    const color = phase === 'GREEN' ? '#4ade80' : phase === 'YELLOW' ? '#fde047' : '#f87171';
+                    
+                    return (
+                        <div key={road} style={{
+                            background:'linear-gradient(160deg,#1a2540,#111827)', borderRadius:16, padding:18,
+                            border: isWin ? '2px solid #22c55e' : '1px solid #1e3a5f',
+                            textAlign: 'center'
+                        }}>
+                            <h3 style={{ margin:'0 0 10px', color: '#cbd5e1', fontSize: 18 }}>{road} Road</h3>
+                            <div style={{ display:'flex', justifyContent:'center', gap:15, marginBottom:10 }}>
+                                {['RED','YELLOW','GREEN'].map(c => (
+                                    <Bulb key={c} color={c} active={phase === c} size={40} />
+                                ))}
+                            </div>
+                            <div style={{ fontSize: 20, fontWeight: 'bold', color }}>
+                                {phase} {count > 0 ? `(${count}s)` : ''}
+                            </div>
+                            {isWin && <div style={{ marginTop: 10, color: '#4ade80', fontSize: 12 }}>● CURRENT PRIORITY</div>}
+                        </div>
+                    );
+                })}
+            </div>
+
+            {/* System Status */}
+            <div style={{ background:'linear-gradient(160deg,#1a2540,#111827)', borderRadius:16, padding:20, border:'1px solid #1e3a5f' }}>
+                <h3 style={{ margin:'0 0 14px', color:'#94a3b8', fontSize:14 }}>📊 System Status</h3>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:12 }}>
+                    <div style={{ background:'#0f172a', borderRadius:10, padding:12 }}>
+                        <div style={{ fontSize:10, color:'#64748b' }}>System Mode</div>
+                        <div style={{ fontSize:13, fontWeight:'bold', color:'#4ade80' }}>{decision?.mode || '—'}</div>
+                    </div>
+                    <div style={{ background:'#0f172a', borderRadius:10, padding:12 }}>
+                        <div style={{ fontSize:10, color:'#64748b' }}>Current Winner</div>
+                        <div style={{ fontSize:13, fontWeight:'bold', color:'#4ade80' }}>{winner ? `${winner} → GREEN` : 'Starting'}</div>
+                    </div>
+                    <div style={{ background:'#0f172a', borderRadius:10, padding:12 }}>
+                        <div style={{ fontSize:10, color:'#64748b' }}>Yellow Time</div>
+                        <div style={{ fontSize:13, fontWeight:'bold', color: rainDetected ? '#60a5fa' : '#4ade80' }}>
+                            {yellowTime}s {rainDetected ? '(rain extended)' : '(normal)'}
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <div style={{ textAlign:'center', marginTop:28, color:'#1e3a5f', fontSize:11 }}>
                 HYDRA v8.0 — User Dashboard — Nawinna Junction, Kurunegala
