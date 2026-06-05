@@ -956,7 +956,7 @@
 
 
 // client/src/pages/AdminDashboard.js — HYDRA v8.0 with Sensor Visuals + Analytics
-// Fixed: analytics section restored, unused variables removed
+// FIXED: All JSX tags properly closed
 
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
@@ -1331,7 +1331,7 @@ export default function AdminDashboard({ user, onLogout }) {
     const [espOnline,   setEspOnline]   = useState({ North:true, South:true, East:true, West:true });
     const [heavyActive, setHeavyActive] = useState({ North:false, South:false, East:false, West:false });
     
-    // Analytics states - restored
+    // Analytics states
     const [analyticsTab, setAnalyticsTab] = useState('livecongestion');
     const [analyticsData, setAnalyticsData] = useState({ peakHours:[], roadPerf:[], efficiency:{} });
 
@@ -1385,10 +1385,10 @@ export default function AdminDashboard({ user, onLogout }) {
         socket.on('espStatusUpdate',    ({ road, online }) => setEspOnline(prev => ({ ...prev, [road]: online })));
         socket.on('heavyVehicleUpdate', ({ road, active }) => setHeavyActive(prev => ({ ...prev, [road]: active })));
         
-        // Analytics socket listeners - restored
+        // Analytics socket listeners
         socket.on('analyticsUpdate',    data => setAnalyticsData({ peakHours: data.peakHours||[], roadPerf: data.roadPerf||[], efficiency: data.efficiency||{} }));
 
-        // Analytics API calls - restored
+        // Analytics API calls
         axios.get(`${SERVER}/api/analytics/road-performance`).then(r => setAnalyticsData(p => ({...p, roadPerf: r.data}))).catch(()=>{});
         axios.get(`${SERVER}/api/analytics/peak-hours`).then(r => setAnalyticsData(p => ({...p, peakHours: r.data}))).catch(()=>{});
         axios.get(`${SERVER}/api/analytics/system-efficiency`).then(r => setAnalyticsData(p => ({...p, efficiency: r.data}))).catch(()=>{});
@@ -1641,7 +1641,7 @@ export default function AdminDashboard({ user, onLogout }) {
                                     {['Rank','Road','Scenario','US1','US2','Piezo','Queue','Next Traffic','Green','LED'].map(h => (
                                         <th key={h} style={{ padding:'8px 10px', textAlign:'left', color:'#475569', fontSize:10, letterSpacing:1, whiteSpace:'nowrap' }}>{h}</th>
                                     ))}
-                                </table>
+                                </tr>
                             </thead>
                             <tbody>
                                 {decision.priorities.map((p, i) => {
@@ -1707,7 +1707,7 @@ export default function AdminDashboard({ user, onLogout }) {
                 </div>
             </div>
 
-            {/* ==================== TRAFFIC ANALYTICS SECTION - RESTORED ==================== */}
+            {/* TRAFFIC ANALYTICS SECTION */}
             <div style={{ background:'linear-gradient(160deg,#1a2540,#111827)', borderRadius:16, padding:20, marginTop:22, border:'1px solid #1e3a5f' }}>
                 <h3 style={{ margin:'0 0 6px', color:'#e2e8f0', fontSize:16 }}>🗺️ Traffic Analytics — Nawinna Junction</h3>
                 <p style={{ color:'#475569', fontSize:12, margin:'0 0 16px' }}>
