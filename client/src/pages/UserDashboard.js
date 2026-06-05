@@ -1,4 +1,4 @@
-// client/src/pages/UserDashboard.js
+// client/src/pages/UserDashboard.js - FULLY FIXED
 // HYDRA Dashboard - USER VERSION (No Traffic Police Override)
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -191,7 +191,7 @@ export default function UserDashboard({ user, onLogout }) {
     const [pedStatus,           setPedStatus]           = useState({});
     const [decision,            setDecision]            = useState(null);
     const [connected,           setConnected]           = useState(false);
-    const [notification,        setNotification]        = useState(null);
+    // Notification state removed - not used in UserDashboard
     const [espOnline,           setEspOnline]           = useState({ North: true, South: true, East: true, West: true });
     const [heavyVehicleActive,  setHeavyVehicleActive]  = useState({ North: false, South: false, East: false, West: false });
     const [analyticsTab,        setAnalyticsTab]        = useState('livecongestion');
@@ -201,8 +201,6 @@ export default function UserDashboard({ user, onLogout }) {
     });
 
     const socketRef = useRef(null);
-
-    // showNotif function removed - not used in UserDashboard
 
     useEffect(() => {
         const socket = io(SERVER, { transports: ['websocket', 'polling'] });
@@ -325,8 +323,6 @@ export default function UserDashboard({ user, onLogout }) {
                     Sign Out
                 </button>
             </div>
-
-            
 
             {/* ── HEADER ── */}
             <div style={{ textAlign: 'center', marginBottom: 24 }}>
