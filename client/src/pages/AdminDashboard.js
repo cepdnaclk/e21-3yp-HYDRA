@@ -954,8 +954,9 @@
 //     );
 // }
 
-// client/src/pages/AdminDashboard.js — HYDRA v8.0 with Sensor Visuals
-// Shows physical sensor placement: US1 (5cm from stop line) and US2 (15cm back)
+
+// client/src/pages/AdminDashboard.js — HYDRA v8.0 with Sensor Visuals + Analytics
+// Fixed: analytics section restored, unused variables removed
 
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
@@ -1000,8 +1001,7 @@ const PedBulb = ({ color, active, size = 28 }) => {
 
 // ── Sensor Visualization Component (shows physical placement) ────────────────
 const SensorVisualization = ({ us1Stable, us2Stable, us1Raw, us2Raw, usWorking, piezoActive, roadName }) => {
-    // Calculate distance in cm (raw values might be cm or mm)
-    const us1Dist = us1Raw < 100 ? us1Raw : us1Raw / 10; // normalize if needed
+    const us1Dist = us1Raw < 100 ? us1Raw : us1Raw / 10;
     const us2Dist = us2Raw < 100 ? us2Raw : us2Raw / 10;
     
     return (
@@ -1019,9 +1019,7 @@ const SensorVisualization = ({ us1Stable, us2Stable, us1Raw, us2Raw, usWorking, 
                 {!usWorking && <span style={{ background: '#7f1d1d', color: '#f87171', padding: '2px 8px', borderRadius: 10, fontSize: 9 }}>OFFLINE</span>}
             </div>
 
-            {/* Physical road diagram */}
             <div style={{ position: 'relative', marginBottom: 16 }}>
-                {/* Road lane representation */}
                 <div style={{
                     background: '#1e293b',
                     height: 60,
@@ -1029,7 +1027,6 @@ const SensorVisualization = ({ us1Stable, us2Stable, us1Raw, us2Raw, usWorking, 
                     position: 'relative',
                     border: '2px solid #475569'
                 }}>
-                    {/* Stop line */}
                     <div style={{
                         position: 'absolute',
                         right: 0,
@@ -1048,7 +1045,6 @@ const SensorVisualization = ({ us1Stable, us2Stable, us1Raw, us2Raw, usWorking, 
                         fontWeight: 'bold'
                     }}>STOP LINE</div>
 
-                    {/* US1 Sensor (5cm) */}
                     <div style={{
                         position: 'absolute',
                         right: '12%',
@@ -1074,19 +1070,12 @@ const SensorVisualization = ({ us1Stable, us2Stable, us1Raw, us2Raw, usWorking, 
                             marginTop: 4,
                             color: us1Stable ? '#f87171' : '#4ade80',
                             fontWeight: 'bold'
-                        }}>
-                            US1
-                        </div>
-                        <div style={{
-                            fontSize: 8,
-                            textAlign: 'center',
-                            color: '#64748b'
-                        }}>
+                        }}>US1</div>
+                        <div style={{ fontSize: 8, textAlign: 'center', color: '#64748b' }}>
                             {us1Dist < 20 ? `${us1Dist}cm` : '—'} / 5cm
                         </div>
                     </div>
 
-                    {/* US2 Sensor (15cm - further back) */}
                     <div style={{
                         position: 'absolute',
                         right: '35%',
@@ -1112,19 +1101,12 @@ const SensorVisualization = ({ us1Stable, us2Stable, us1Raw, us2Raw, usWorking, 
                             marginTop: 4,
                             color: us2Stable ? (us1Stable ? '#f87171' : '#fde047') : '#4ade80',
                             fontWeight: 'bold'
-                        }}>
-                            US2
-                        </div>
-                        <div style={{
-                            fontSize: 8,
-                            textAlign: 'center',
-                            color: '#64748b'
-                        }}>
+                        }}>US2</div>
+                        <div style={{ fontSize: 8, textAlign: 'center', color: '#64748b' }}>
                             {us2Dist < 30 ? `${us2Dist}cm` : '—'} / 15cm
                         </div>
                     </div>
 
-                    {/* Piezo sensor (under road) */}
                     <div style={{
                         position: 'absolute',
                         left: '50%',
@@ -1148,7 +1130,6 @@ const SensorVisualization = ({ us1Stable, us2Stable, us1Raw, us2Raw, usWorking, 
                     </div>
                 </div>
 
-                {/* Distance markers */}
                 <div style={{
                     display: 'flex',
                     justifyContent: 'flex-end',
@@ -1163,7 +1144,6 @@ const SensorVisualization = ({ us1Stable, us2Stable, us1Raw, us2Raw, usWorking, 
                 </div>
             </div>
 
-            {/* Status summary */}
             <div style={{
                 display: 'flex',
                 gap: 8,
@@ -1211,7 +1191,6 @@ const SensorVisualization = ({ us1Stable, us2Stable, us1Raw, us2Raw, usWorking, 
     );
 };
 
-// Queue badge component
 const QueueBadge = ({ us1Stable, us2Stable, piezoActive }) => {
     let bg, color, icon, label;
     if (us1Stable && us2Stable && piezoActive) { bg='#4a0e0e'; color='#fca5a5'; icon='🔴🚛'; label='HEAVY + PIEZO (+9s)'; }
@@ -1351,6 +1330,8 @@ export default function AdminDashboard({ user, onLogout }) {
     const [notif,       setNotif]       = useState(null);
     const [espOnline,   setEspOnline]   = useState({ North:true, South:true, East:true, West:true });
     const [heavyActive, setHeavyActive] = useState({ North:false, South:false, East:false, West:false });
+    
+    // Analytics states - restored
     const [analyticsTab, setAnalyticsTab] = useState('livecongestion');
     const [analyticsData, setAnalyticsData] = useState({ peakHours:[], roadPerf:[], efficiency:{} });
 
@@ -1403,8 +1384,11 @@ export default function AdminDashboard({ user, onLogout }) {
         socket.on('googleTrafficUpdate',({ googleTraffic: gt, googleWorking: gw }) => { setGoogleTraffic(gt); setGoogleWorking(gw); });
         socket.on('espStatusUpdate',    ({ road, online }) => setEspOnline(prev => ({ ...prev, [road]: online })));
         socket.on('heavyVehicleUpdate', ({ road, active }) => setHeavyActive(prev => ({ ...prev, [road]: active })));
+        
+        // Analytics socket listeners - restored
         socket.on('analyticsUpdate',    data => setAnalyticsData({ peakHours: data.peakHours||[], roadPerf: data.roadPerf||[], efficiency: data.efficiency||{} }));
 
+        // Analytics API calls - restored
         axios.get(`${SERVER}/api/analytics/road-performance`).then(r => setAnalyticsData(p => ({...p, roadPerf: r.data}))).catch(()=>{});
         axios.get(`${SERVER}/api/analytics/peak-hours`).then(r => setAnalyticsData(p => ({...p, peakHours: r.data}))).catch(()=>{});
         axios.get(`${SERVER}/api/analytics/system-efficiency`).then(r => setAnalyticsData(p => ({...p, efficiency: r.data}))).catch(()=>{});
@@ -1522,14 +1506,12 @@ export default function AdminDashboard({ user, onLogout }) {
                     const isWin       = winner === road;
                     const ped         = pedStatus[road] || { requested:false, crossing:false, duration:0 };
                     const scenario    = scenarioMap[road] || null;
-                    const roadGreen   = decisionGreenMap[road] || greenTime[road] || 3;
                     const espUp       = espOnline[road] !== false;
                     const us          = usData[road] || { us1Stable:false, us2Stable:false, us1Raw:999, us2Raw:999 };
                     const piezoRoad   = piezoData[road] || { heavy:false };
                     const piezoActive = piezoRoad.heavy === true;
                     const heavyHere   = piezoActive || (heavyActive[road] || false);
 
-                    // Calculate green time bonus explanation
                     let greenBonus = '';
                     if (us.us1Stable && us.us2Stable && piezoActive) greenBonus = 'Base 3s + Heavy 6s + Piezo 3s = 12s';
                     else if (us.us1Stable && us.us2Stable) greenBonus = 'Base 3s + Heavy 6s = 9s';
@@ -1545,7 +1527,6 @@ export default function AdminDashboard({ user, onLogout }) {
                         }}>
                             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:10 }}>
                                 <div style={{ flex:1 }}>
-                                    {/* Road name + badges */}
                                     <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10, flexWrap:'wrap' }}>
                                         <h3 style={{ margin:0, color:'#cbd5e1', fontSize:14, letterSpacing:2, textTransform:'uppercase' }}>{road} ROAD</h3>
                                         {isWin && <span style={{ color:'#4ade80', fontSize:11, fontWeight:'bold' }}>● PRIORITY</span>}
@@ -1554,7 +1535,6 @@ export default function AdminDashboard({ user, onLogout }) {
                                         {heavyHere && <span style={{ background:'#1a1000', color:'#fb923c', border:'1px solid #f59e0b', padding:'2px 8px', borderRadius:8, fontSize:10, fontWeight:'bold' }}>🚛 HEAVY VEHICLE</span>}
                                     </div>
 
-                                    {/* Traffic lights */}
                                     <div style={{ display:'flex', gap:10, marginBottom:14, alignItems:'center' }}>
                                         {['RED','YELLOW','GREEN'].map(c => (
                                             <div key={c} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:3 }}>
@@ -1577,7 +1557,6 @@ export default function AdminDashboard({ user, onLogout }) {
                                         </div>
                                     </div>
 
-                                    {/* Sensor Visualization - NEW! Shows physical placement */}
                                     <SensorVisualization 
                                         us1Stable={us.us1Stable}
                                         us2Stable={us.us2Stable}
@@ -1588,7 +1567,6 @@ export default function AdminDashboard({ user, onLogout }) {
                                         roadName={road}
                                     />
 
-                                    {/* Queue Status & Green Time */}
                                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
                                         <QueueBadge 
                                             us1Stable={us.us1Stable} 
@@ -1600,14 +1578,12 @@ export default function AdminDashboard({ user, onLogout }) {
                                         </div>
                                     </div>
 
-                                    {/* Next intersection traffic */}
                                     <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8, background:'#0f172a', padding:8, borderRadius:8 }}>
                                         <span style={{ fontSize:13 }}>🗺️</span>
                                         <span style={{ fontSize:11, color:'#64748b' }}>Next Intersection:</span>
                                         <TrafficBadge level={google} />
                                     </div>
 
-                                    {/* Pedestrian */}
                                     <div style={{
                                         background: ped.crossing ? '#1e3a5f' : ped.requested ? '#3d2000' : '#0f172a',
                                         border: `1px solid ${ped.crossing ? '#3b82f6' : ped.requested ? '#f59e0b' : '#1e293b'}`,
@@ -1625,7 +1601,6 @@ export default function AdminDashboard({ user, onLogout }) {
                                     <ForcePanel road={road} onForce={handleForce} />
                                 </div>
 
-                                {/* Right: ped signal */}
                                 <PedWidget ped={ped} mainPhase={phase} mainCountdown={count} />
                             </div>
                         </div>
@@ -1666,7 +1641,7 @@ export default function AdminDashboard({ user, onLogout }) {
                                     {['Rank','Road','Scenario','US1','US2','Piezo','Queue','Next Traffic','Green','LED'].map(h => (
                                         <th key={h} style={{ padding:'8px 10px', textAlign:'left', color:'#475569', fontSize:10, letterSpacing:1, whiteSpace:'nowrap' }}>{h}</th>
                                     ))}
-                                </tr>
+                                </table>
                             </thead>
                             <tbody>
                                 {decision.priorities.map((p, i) => {
@@ -1730,6 +1705,140 @@ export default function AdminDashboard({ user, onLogout }) {
                     <div>🔁 <strong>Fallback</strong>: no sensors → round-robin N→S→E→W equal 3s each</div>
                     <div>⚡ <strong>ESP32 Offline</strong>: excluded from winning — synthetic RED applied</div>
                 </div>
+            </div>
+
+            {/* ==================== TRAFFIC ANALYTICS SECTION - RESTORED ==================== */}
+            <div style={{ background:'linear-gradient(160deg,#1a2540,#111827)', borderRadius:16, padding:20, marginTop:22, border:'1px solid #1e3a5f' }}>
+                <h3 style={{ margin:'0 0 6px', color:'#e2e8f0', fontSize:16 }}>🗺️ Traffic Analytics — Nawinna Junction</h3>
+                <p style={{ color:'#475569', fontSize:12, margin:'0 0 16px' }}>
+                    Live data to help road users choose the best time and route to travel.
+                </p>
+
+                <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+                    {[
+                        { id: 'livecongestion', label: '🚦 Live Road Status' },
+                        { id: 'besttimes',      label: '⏰ Best Times to Travel' },
+                        { id: 'roadhealth',     label: '🛣️ Road Performance' },
+                    ].map(tab => (
+                        <button key={tab.id} onClick={() => setAnalyticsTab(tab.id)}
+                            style={{
+                                background: analyticsTab === tab.id ? '#1e3a5f' : '#0f172a',
+                                color: analyticsTab === tab.id ? '#60a5fa' : '#475569',
+                                border: `1px solid ${analyticsTab === tab.id ? '#3b82f6' : '#334155'}`,
+                                padding: '7px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold'
+                            }}>
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+
+                {analyticsTab === 'livecongestion' && (
+                    <div>
+                        <p style={{ fontSize: 11, color: '#64748b', marginBottom: 14 }}>
+                            Current conditions at Nawinna Junction right now.
+                        </p>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12 }}>
+                            {ROADS.map(road => {
+                                const us     = usData[road] || {};
+                                const google = googleTraffic[road] || 'Unknown';
+                                const espUp  = espOnline[road] !== false;
+                                const ql     = us.us1Stable && us.us2Stable ? 'Heavy' : us.us1Stable ? 'Light' : 'None';
+
+                                let cong = 'Low', waitEst = 'Under 1 min', tip = 'Good to travel', barColor = '#22c55e';
+                                if (!espUp) { cong='Unknown'; waitEst='Sensor offline'; tip='Proceed with caution'; barColor='#64748b'; }
+                                else if (ql==='Heavy' || google==='Heavy') { cong='Heavy'; waitEst=`${(greenTime[road]||9)+yellowTime}s wait`; tip='Expect delays — alternate route'; barColor='#ef4444'; }
+                                else if (ql==='Light' || google==='Medium') { cong='Moderate'; waitEst=`${greenTime[road]||6}s wait`; tip='Some traffic — normal wait'; barColor='#f59e0b'; }
+
+                                return (
+                                    <div key={road} style={{ background: '#0f172a', borderRadius: 12, padding: 14, border: `2px solid ${barColor}44` }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                            <span style={{ fontWeight: 'bold', color: '#e2e8f0', fontSize: 14 }}>{road} Road</span>
+                                            <span style={{ background: `${barColor}22`, color: barColor, border: `1px solid ${barColor}`, padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 'bold' }}>{cong}</span>
+                                        </div>
+                                        <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>⏳ <strong style={{ color: barColor }}>{waitEst}</strong></div>
+                                        <div style={{ fontSize: 11, color: '#64748b' }}>{tip}</div>
+                                        <div style={{ background: '#1e293b', borderRadius: 4, height: 6, marginTop: 8 }}>
+                                            <div style={{ width: cong==='Heavy'?'85%':cong==='Moderate'?'50%':cong==='Unknown'?'30%':'15%', background: barColor, height: '100%', borderRadius: 4, transition: 'width 1s' }} />
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        {rainDetected && (
+                            <div style={{ marginTop: 12, padding: 12, background: '#0f1f3d', border: '1px solid #3b82f6', borderRadius: 10 }}>
+                                <div style={{ color: '#60a5fa', fontWeight: 'bold', fontSize: 13 }}>🌧️ Rain Advisory</div>
+                                <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>
+                                    Rain detected. Yellow extended to {yellowTime}s for safety. Allow extra braking distance.
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {analyticsTab === 'besttimes' && (
+                    <div>
+                        <p style={{ fontSize: 11, color: '#64748b', marginBottom: 14 }}>
+                            Based on traffic data history. Shows the least congested hours at this junction.
+                        </p>
+                        {analyticsData.peakHours && analyticsData.peakHours.filter(h => h.North > 0 || h.South > 0 || h.East > 0 || h.West > 0).length > 0 ? (
+                            <div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
+                                    {analyticsData.peakHours.filter(h => h.North > 0 || h.South > 0 || h.East > 0 || h.West > 0).map(h => {
+                                        const avg = Math.round((h.North + h.South + h.East + h.West) / 4);
+                                        const color = avg > 60 ? '#ef4444' : avg > 30 ? '#f59e0b' : '#22c55e';
+                                        const label = avg > 60 ? 'Peak — avoid' : avg > 30 ? 'Moderate' : '✅ Good time';
+                                        return (
+                                            <div key={h.hour} style={{ background: '#0f172a', borderRadius: 8, padding: 10, border: `1px solid ${color}33`, textAlign: 'center' }}>
+                                                <div style={{ fontSize: 14, fontWeight: 'bold', color: '#e2e8f0' }}>
+                                                    {h.hour.toString().padStart(2,'0')}:00
+                                                </div>
+                                                <div style={{ fontSize: 11, color, fontWeight: 'bold', marginTop: 3 }}>{label}</div>
+                                                <div style={{ background: '#1e293b', borderRadius: 3, height: 5, marginTop: 5 }}>
+                                                    <div style={{ width: `${avg}%`, background: color, height: '100%', borderRadius: 3 }} />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ color: '#475569', fontSize: 12, padding: 20, textAlign: 'center' }}>
+                                📊 Collecting historical data... Check back after the system has run for a few hours.
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {analyticsTab === 'roadhealth' && (
+                    <div>
+                        <p style={{ fontSize: 11, color: '#64748b', marginBottom: 14 }}>
+                            Which road gets the most green light priority and how long you typically wait.
+                        </p>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
+                            {analyticsData.roadPerf && analyticsData.roadPerf.length > 0 ? analyticsData.roadPerf.map(r => {
+                                const wait = r.avgWaitTime;
+                                const color = wait > 30 ? '#ef4444' : wait > 15 ? '#f59e0b' : '#22c55e';
+                                return (
+                                    <div key={r.road} style={{ background: '#0f172a', borderRadius: 12, padding: 14, border: `1px solid ${color}44` }}>
+                                        <div style={{ fontWeight: 'bold', color: '#e2e8f0', marginBottom: 10, fontSize: 14 }}>{r.road} Road</div>
+                                        <div style={{ fontSize: 12, color: '#64748b', lineHeight: 2 }}>
+                                            <div>⏳ Avg wait time: <strong style={{ color }}>{wait}s</strong></div>
+                                            <div>🟢 Avg green time: <strong style={{ color: '#22c55e' }}>{r.avgGreenTime}s</strong></div>
+                                            <div>🏆 Priority wins: <strong style={{ color: '#60a5fa' }}>{r.priorityWins}</strong></div>
+                                            <div>🔴 Heavy traffic events: {r.heavyTrafficCount}</div>
+                                            <div>⚡ Gets green when needed: <strong style={{ color: '#a78bfa' }}>{r.efficiency}%</strong></div>
+                                        </div>
+                                        <div style={{ marginTop: 8, fontSize: 11, color: wait > 30 ? '#ef4444' : wait > 15 ? '#f59e0b' : '#4ade80', fontWeight: 'bold' }}>
+                                            {wait > 30 ? '⚠️ Long waits on this road' : wait > 15 ? '⚡ Moderate — normal operation' : '✅ Short waits — good flow'}
+                                        </div>
+                                    </div>
+                                );
+                            }) : (
+                                <div style={{ color: '#475569', fontSize: 12, padding: 20 }}>Collecting road performance data...</div>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
 
             <div style={{ textAlign:'center', marginTop:28, color:'#1e3a5f', fontSize:11 }}>
