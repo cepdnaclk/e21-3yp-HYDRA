@@ -886,12 +886,12 @@
 // }
 
 
-// client/src/pages/UserDashboard.js - CLEANED VERSION
+// client/src/pages/UserDashboard.js - FULLY FIXED
 // HYDRA Dashboard - USER VERSION (No Traffic Police Override)
 
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
-import axios from 'axios';
+// axios removed - not used in this component
 
 const SERVER = 'http://56.228.30.50:5000';
 
