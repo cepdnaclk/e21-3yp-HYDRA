@@ -886,14 +886,15 @@
 // }
 
 
-// client/src/pages/UserDashboard.js - FULLY FIXED
-// HYDRA Dashboard - USER VERSION (No Traffic Police Override)
+// client/src/pages/UserDashboard.js - HYDRA v8.0 USER VERSION
+// No Force Override Panel - Read-only view for regular users
 
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
-// axios removed - not used in this component
+// axios removed - not used in UserDashboard
 
 const SERVER = 'http://56.228.30.50:5000';
+const ROADS = ['North', 'South', 'East', 'West'];
 
 // ── Traffic light bulb ────────────────────────────────────────────────────────
 const Bulb = ({ color, active, size = 36 }) => {
@@ -913,7 +914,7 @@ const Bulb = ({ color, active, size = 36 }) => {
     );
 };
 
-// ── Main User Dashboard ──────────────────────────────────────────────────────
+// ── User Dashboard (No Force Override) ──────────────────────────────────────
 export default function UserDashboard({ user, onLogout }) {
     const [livePhase,   setLivePhase]   = useState({ North:'RED', South:'RED', East:'RED', West:'RED' });
     const [liveCD,      setLiveCD]      = useState({ North:0, South:0, East:0, West:0 });
@@ -921,100 +922,213 @@ export default function UserDashboard({ user, onLogout }) {
     const [connected,   setConnected]   = useState(false);
     const [rainDetected, setRainDetected] = useState(false);
     const [yellowTime,  setYellowTime]  = useState(3);
+    const [googleWorking, setGoogleWorking] = useState(false);
+    const [activeSensors, setActiveSensors] = useState(0);
 
     const socketRef = useRef(null);
 
     useEffect(() => {
-        const socket = io(SERVER, { transports: ['websocket','polling'] });
+        const socket = io(SERVER, { transports: ['websocket', 'polling'] });
         socketRef.current = socket;
-        socket.on('connect',    () => setConnected(true));
+        
+        socket.on('connect', () => setConnected(true));
         socket.on('disconnect', () => setConnected(false));
 
         socket.on('fullState', data => {
-            if (data.livePhase)     setLivePhase(data.livePhase);
+            if (data.livePhase) setLivePhase(data.livePhase);
             if (data.liveCountdown) setLiveCD(data.liveCountdown);
             if (data.latestDecision) setDecision(data.latestDecision);
-            if (data.rainDetected !== undefined) { 
-                setRainDetected(data.rainDetected); 
-                setYellowTime(data.rainDetected ? 5 : 3); 
+            if (data.rainDetected !== undefined) {
+                setRainDetected(data.rainDetected);
+                setYellowTime(data.rainDetected ? 5 : 3);
+            }
+            if (data.googleWorking !== undefined) setGoogleWorking(data.googleWorking);
+            
+            // Count active sensors
+            if (data.usWorking) {
+                const count = Object.values(data.usWorking).filter(Boolean).length;
+                setActiveSensors(count);
             }
         });
 
         socket.on('countdown', ({ road, phase, remaining }) => {
-            setLiveCD(p => ({ ...p, [road]: remaining }));
-            setLivePhase(p => ({ ...p, [road]: phase }));
+            setLiveCD(prev => ({ ...prev, [road]: remaining }));
+            setLivePhase(prev => ({ ...prev, [road]: phase }));
         });
-        socket.on('ledStateUpdate', ({ road, state }) => setLivePhase(p => ({ ...p, [road]: state })));
-        socket.on('newDecision',    dec => setDecision(dec));
-        socket.on('rainUpdate', ({ rainDetected: r }) => { 
-            setRainDetected(r); 
-            setYellowTime(r ? 5 : 3); 
+        
+        socket.on('ledStateUpdate', ({ road, state }) => {
+            setLivePhase(prev => ({ ...prev, [road]: state }));
+        });
+        
+        socket.on('newDecision', dec => setDecision(dec));
+        
+        socket.on('rainUpdate', ({ rainDetected: r }) => {
+            setRainDetected(r);
+            setYellowTime(r ? 5 : 3);
         });
 
         return () => socket.disconnect();
     }, []);
 
     const winner = decision?.winner;
+    const redForOthers = decision?.redForOthers || 0;
 
     return (
-        <div style={{ padding: 20, fontFamily: "'Segoe UI', sans-serif", background: '#0a0f1e', minHeight: '100vh', color: 'white' }}>
-
-            {/* User header */}
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
-                marginBottom:16, padding:'10px 16px', background:'#0f172a', borderRadius:12, border:'1px solid #1e293b' }}>
-                <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                    {user.photo && <img src={user.photo} alt="avatar" style={{ width:32, height:32, borderRadius:'50%' }} />}
+        <div style={{ 
+            padding: 20, 
+            fontFamily: "'Segoe UI', sans-serif", 
+            background: '#0a0f1e', 
+            minHeight: '100vh', 
+            color: 'white' 
+        }}>
+            {/* User Header */}
+            <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 16,
+                padding: '10px 16px',
+                background: '#0f172a',
+                borderRadius: 12,
+                border: '1px solid #1e293b'
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {user.photo && (
+                        <img 
+                            src={user.photo} 
+                            alt="avatar" 
+                            style={{ width: 32, height: 32, borderRadius: '50%' }} 
+                        />
+                    )}
                     <div>
-                        <div style={{ color:'#e2e8f0', fontSize:13, fontWeight:'bold' }}>{user.name}</div>
-                        <div style={{ color:'#475569', fontSize:11 }}>{user.email}</div>
+                        <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 'bold' }}>
+                            {user.name}
+                        </div>
+                        <div style={{ color: '#475569', fontSize: 11 }}>{user.email}</div>
                     </div>
                 </div>
-                <button onClick={onLogout} style={{ background:'#1e293b', border:'1px solid #334155',
-                    borderRadius:8, color:'#94a3b8', padding:'6px 14px', fontSize:12, cursor:'pointer' }}>
+                <button 
+                    onClick={onLogout} 
+                    style={{
+                        background: '#1e293b',
+                        border: '1px solid #334155',
+                        borderRadius: 8,
+                        color: '#94a3b8',
+                        padding: '6px 14px',
+                        fontSize: 12,
+                        cursor: 'pointer'
+                    }}
+                >
                     Sign Out
                 </button>
             </div>
 
-            {/* Header */}
-            <div style={{ textAlign:'center', marginBottom:24 }}>
-                <h1 style={{ fontSize:'2.2rem', margin:'0 0 4px', letterSpacing:2 }}>🚦 H.Y.D.R.A Control Center</h1>
-                <p style={{ color:'#475569', margin:0, fontSize:13 }}>Nawinna Junction, Kurunegala — Real-time Adaptive Signal Management</p>
-                <div style={{ marginTop:10, display:'flex', justifyContent:'center', gap:10, flexWrap:'wrap', alignItems:'center' }}>
-                    <span style={{ background:connected?'#14532d':'#7f1d1d', color:connected?'#4ade80':'#f87171', padding:'3px 12px', borderRadius:20, fontSize:12, fontWeight:'bold' }}>
+            {/* Header Status */}
+            <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                <h1 style={{ fontSize: '2.2rem', margin: '0 0 4px', letterSpacing: 2 }}>
+                    🚦 H.Y.D.R.A User Dashboard
+                </h1>
+                <p style={{ color: '#475569', margin: 0, fontSize: 13 }}>
+                    Nawinna Junction, Kurunegala — Real-time Traffic Information
+                </p>
+                <div style={{ 
+                    marginTop: 10, 
+                    display: 'flex', 
+                    justifyContent: 'center', 
+                    gap: 10, 
+                    flexWrap: 'wrap', 
+                    alignItems: 'center' 
+                }}>
+                    <span style={{
+                        background: connected ? '#14532d' : '#7f1d1d',
+                        color: connected ? '#4ade80' : '#f87171',
+                        padding: '3px 12px',
+                        borderRadius: 20,
+                        fontSize: 12,
+                        fontWeight: 'bold'
+                    }}>
                         {connected ? '● LIVE' : '● OFFLINE'}
                     </span>
-                    <span style={{ background:'#1e293b', color:'#94a3b8', padding:'3px 12px', borderRadius:20, fontSize:12 }}>
+                    <span style={{
+                        background: '#1e293b',
+                        color: '#94a3b8',
+                        padding: '3px 12px',
+                        borderRadius: 20,
+                        fontSize: 12
+                    }}>
                         Mode: {decision?.mode || 'Starting...'}
                     </span>
-                    <span style={{ background:rainDetected?'#1e3a5f':'#14532d', color:rainDetected?'#60a5fa':'#4ade80',
-                        border:`1px solid ${rainDetected?'#3b82f6':'#22c55e'}`, padding:'3px 12px', borderRadius:20, fontSize:12, fontWeight:'bold' }}>
+                    <span style={{
+                        background: rainDetected ? '#1e3a5f' : '#14532d',
+                        color: rainDetected ? '#60a5fa' : '#4ade80',
+                        border: `1px solid ${rainDetected ? '#3b82f6' : '#22c55e'}`,
+                        padding: '3px 12px',
+                        borderRadius: 20,
+                        fontSize: 12,
+                        fontWeight: 'bold'
+                    }}>
                         {rainDetected ? `🌧️ RAIN — Yellow: ${yellowTime}s` : `☀️ DRY — Yellow: ${yellowTime}s`}
+                    </span>
+                    <span style={{
+                        background: '#1e293b',
+                        color: '#94a3b8',
+                        padding: '3px 12px',
+                        borderRadius: 20,
+                        fontSize: 12
+                    }}>
+                        📡 Sensors: {activeSensors}/4
+                    </span>
+                    <span style={{
+                        background: '#1e293b',
+                        color: '#94a3b8',
+                        padding: '3px 12px',
+                        borderRadius: 20,
+                        fontSize: 12
+                    }}>
+                        🗺️ Google: {googleWorking ? 'Active' : 'Disabled'}
                     </span>
                 </div>
             </div>
 
-            {/* Decision banner */}
+            {/* Decision Banner */}
             {decision?.winner && (
-                <div style={{ background:'linear-gradient(135deg,#1e3a5f,#0d2137)', border:'1px solid #2E75B6', borderRadius:14, padding:'16px 22px', marginBottom:22 }}>
-                    <div style={{ display:'flex', gap:16, alignItems:'center', flexWrap:'wrap' }}>
-                        <span style={{ fontSize:'1.8rem' }}>🧠</span>
-                        <div style={{ flex:1 }}>
-                            <div style={{ fontWeight:'bold', fontSize:'1.05rem' }}>
-                                Priority: <span style={{ color:'#4ade80' }}>{decision.winner} Road → GREEN ({decision.greenDuration}s)</span>
+                <div style={{
+                    background: 'linear-gradient(135deg,#1e3a5f,#0d2137)',
+                    border: '1px solid #2E75B6',
+                    borderRadius: 14,
+                    padding: '16px 22px',
+                    marginBottom: 22
+                }}>
+                    <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '1.8rem' }}>🧠</span>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '1.05rem' }}>
+                                Priority: <span style={{ color: '#4ade80' }}>
+                                    {decision.winner} Road → GREEN ({decision.greenDuration}s)
+                                </span>
                             </div>
-                            <div style={{ color:'#94a3b8', fontSize:12, marginTop:4 }}>
+                            <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>
                                 🟡 Yellow: {decision.yellowDuration || yellowTime}s
                                 &nbsp;→&nbsp;
-                                🔴 Others RED: <strong style={{ color:'#f87171' }}>{decision.redForOthers}s</strong>
+                                🔴 Others RED: <strong style={{ color: '#f87171' }}>
+                                    {decision.redForOthers}s
+                                </strong>
                                 &nbsp;| Mode: {decision.mode}
                             </div>
+                            {rainDetected && (
+                                <div style={{ color: '#60a5fa', fontSize: 11, marginTop: 4 }}>
+                                    🌧️ Rain detected — Yellow extended to {yellowTime}s
+                                </div>
+                            )}
                         </div>
-                        <div style={{ display:'flex', gap:10 }}>
-                            {['RED','YELLOW','GREEN'].map(c => (
-                                <div key={c} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:3 }}>
-                                    <Bulb color={c} active={livePhase[winner] === c} size={38} />
-                                    {livePhase[winner] === c && liveCD[winner] > 0 && (
-                                        <span style={{ fontSize:11, color:'#94a3b8' }}>{liveCD[winner]}s</span>
+                        <div style={{ display: 'flex', gap: 10 }}>
+                            {['RED', 'YELLOW', 'GREEN'].map(c => (
+                                <div key={c} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                                    <Bulb color={c} active={livePhase[decision.winner] === c} size={38} />
+                                    {livePhase[decision.winner] === c && liveCD[decision.winner] > 0 && (
+                                        <span style={{ fontSize: 11, color: '#94a3b8' }}>
+                                            {liveCD[decision.winner]}s
+                                        </span>
                                     )}
                                 </div>
                             ))}
@@ -1023,57 +1137,106 @@ export default function UserDashboard({ user, onLogout }) {
                 </div>
             )}
 
-            {/* Simple Road Status Display */}
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))', gap:16, marginBottom:22 }}>
-                {['North', 'South', 'East', 'West'].map(road => {
+            {/* Road Status Cards - Simple View */}
+            <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', 
+                gap: 16, 
+                marginBottom: 22 
+            }}>
+                {ROADS.map(road => {
                     const phase = livePhase[road] || 'RED';
                     const count = liveCD[road] || 0;
-                    const isWin = winner === road;
-                    const color = phase === 'GREEN' ? '#4ade80' : phase === 'YELLOW' ? '#fde047' : '#f87171';
+                    const isWinner = winner === road;
+                    const phaseColor = phase === 'GREEN' ? '#4ade80' : phase === 'YELLOW' ? '#fde047' : '#f87171';
                     
                     return (
                         <div key={road} style={{
-                            background:'linear-gradient(160deg,#1a2540,#111827)', borderRadius:16, padding:18,
-                            border: isWin ? '2px solid #22c55e' : '1px solid #1e3a5f',
-                            textAlign: 'center'
+                            background: 'linear-gradient(160deg,#1a2540,#111827)',
+                            borderRadius: 16,
+                            padding: 18,
+                            border: isWinner ? '2px solid #22c55e' : '1px solid #1e3a5f',
+                            textAlign: 'center',
+                            boxShadow: isWinner ? '0 0 24px rgba(34,197,94,0.18)' : 'none'
                         }}>
-                            <h3 style={{ margin:'0 0 10px', color: '#cbd5e1', fontSize: 18 }}>{road} Road</h3>
-                            <div style={{ display:'flex', justifyContent:'center', gap:15, marginBottom:10 }}>
-                                {['RED','YELLOW','GREEN'].map(c => (
+                            <h3 style={{ margin: '0 0 10px', color: '#cbd5e1', fontSize: 18 }}>
+                                {road} Road
+                                {isWinner && (
+                                    <span style={{ 
+                                        color: '#4ade80', 
+                                        fontSize: 11, 
+                                        fontWeight: 'bold', 
+                                        marginLeft: 8 
+                                    }}>
+                                        ● PRIORITY
+                                    </span>
+                                )}
+                            </h3>
+                            
+                            <div style={{ display: 'flex', justifyContent: 'center', gap: 15, marginBottom: 10 }}>
+                                {['RED', 'YELLOW', 'GREEN'].map(c => (
                                     <Bulb key={c} color={c} active={phase === c} size={40} />
                                 ))}
                             </div>
-                            <div style={{ fontSize: 20, fontWeight: 'bold', color }}>
+                            
+                            <div style={{ fontSize: 20, fontWeight: 'bold', color: phaseColor }}>
                                 {phase} {count > 0 ? `(${count}s)` : ''}
                             </div>
-                            {isWin && <div style={{ marginTop: 10, color: '#4ade80', fontSize: 12 }}>● CURRENT PRIORITY</div>}
+                            
+                            {!isWinner && phase === 'RED' && redForOthers > 0 && (
+                                <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>
+                                    RED for {redForOthers}s this cycle
+                                </div>
+                            )}
                         </div>
                     );
                 })}
             </div>
 
-            {/* System Status */}
-            <div style={{ background:'linear-gradient(160deg,#1a2540,#111827)', borderRadius:16, padding:20, border:'1px solid #1e3a5f' }}>
-                <h3 style={{ margin:'0 0 14px', color:'#94a3b8', fontSize:14 }}>📊 System Status</h3>
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:12 }}>
-                    <div style={{ background:'#0f172a', borderRadius:10, padding:12 }}>
-                        <div style={{ fontSize:10, color:'#64748b' }}>System Mode</div>
-                        <div style={{ fontSize:13, fontWeight:'bold', color:'#4ade80' }}>{decision?.mode || '—'}</div>
+            {/* System Information */}
+            <div style={{
+                background: 'linear-gradient(160deg,#1a2540,#111827)',
+                borderRadius: 16,
+                padding: 20,
+                border: '1px solid #1e3a5f'
+            }}>
+                <h3 style={{ margin: '0 0 14px', color: '#94a3b8', fontSize: 14 }}>
+                    📊 System Information
+                </h3>
+                <div style={{ 
+                    display: 'grid', 
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                    gap: 12 
+                }}>
+                    <div style={{ background: '#0f172a', borderRadius: 10, padding: 12 }}>
+                        <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>System Mode</div>
+                        <div style={{ fontSize: 13, fontWeight: 'bold', color: '#4ade80' }}>
+                            {decision?.mode || '—'}
+                        </div>
                     </div>
-                    <div style={{ background:'#0f172a', borderRadius:10, padding:12 }}>
-                        <div style={{ fontSize:10, color:'#64748b' }}>Current Winner</div>
-                        <div style={{ fontSize:13, fontWeight:'bold', color:'#4ade80' }}>{winner ? `${winner} → GREEN` : 'Starting'}</div>
+                    <div style={{ background: '#0f172a', borderRadius: 10, padding: 12 }}>
+                        <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>Current Priority</div>
+                        <div style={{ fontSize: 13, fontWeight: 'bold', color: '#4ade80' }}>
+                            {winner ? `${winner} → GREEN` : 'Starting'}
+                        </div>
                     </div>
-                    <div style={{ background:'#0f172a', borderRadius:10, padding:12 }}>
-                        <div style={{ fontSize:10, color:'#64748b' }}>Yellow Time</div>
-                        <div style={{ fontSize:13, fontWeight:'bold', color: rainDetected ? '#60a5fa' : '#4ade80' }}>
+                    <div style={{ background: '#0f172a', borderRadius: 10, padding: 12 }}>
+                        <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>Yellow Light Time</div>
+                        <div style={{ fontSize: 13, fontWeight: 'bold', color: rainDetected ? '#60a5fa' : '#4ade80' }}>
                             {yellowTime}s {rainDetected ? '(rain extended)' : '(normal)'}
+                        </div>
+                    </div>
+                    <div style={{ background: '#0f172a', borderRadius: 10, padding: 12 }}>
+                        <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>Green Light Base</div>
+                        <div style={{ fontSize: 13, fontWeight: 'bold', color: '#4ade80' }}>
+                            3s + Light+3s + Heavy+6s + Piezo+3s
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div style={{ textAlign:'center', marginTop:28, color:'#1e3a5f', fontSize:11 }}>
+            {/* Footer */}
+            <div style={{ textAlign: 'center', marginTop: 28, color: '#1e3a5f', fontSize: 11 }}>
                 HYDRA v8.0 — User Dashboard — Nawinna Junction, Kurunegala
             </div>
         </div>
