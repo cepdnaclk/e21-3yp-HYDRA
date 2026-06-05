@@ -954,14 +954,8 @@
 //     );
 // }
 
-
-// client/src/pages/AdminDashboard.js — HYDRA v8.0 Dual Ultrasonic Queue Detection
-// Changes:
-//   - Removed: irData, irUpdate, distance display, IR/ULTRASONIC mode badges
-//   - Added: usData (us1Stable, us2Stable, us1Raw, us2Raw, queueLevel per road)
-//   - Added: queue level badges (QUEUE_HEAVY, QUEUE_LIGHT, QUEUE_NONE, etc.)
-//   - Piezo: unchanged, still requires US1 stable
-//   - Force override panel: admin only (unchanged)
+// client/src/pages/AdminDashboard.js — HYDRA v8.0 with Sensor Visuals
+// Shows physical sensor placement: US1 (5cm from stop line) and US2 (15cm back)
 
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
@@ -1004,6 +998,254 @@ const PedBulb = ({ color, active, size = 28 }) => {
     );
 };
 
+// ── Sensor Visualization Component (shows physical placement) ────────────────
+const SensorVisualization = ({ us1Stable, us2Stable, us1Raw, us2Raw, usWorking, piezoActive, roadName }) => {
+    // Calculate distance in cm (raw values might be cm or mm)
+    const us1Dist = us1Raw < 100 ? us1Raw : us1Raw / 10; // normalize if needed
+    const us2Dist = us2Raw < 100 ? us2Raw : us2Raw / 10;
+    
+    return (
+        <div style={{
+            background: '#0f172a',
+            borderRadius: 12,
+            padding: 12,
+            marginBottom: 12,
+            border: '1px solid #334155'
+        }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <span style={{ fontSize: 14 }}>📡</span>
+                <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 'bold' }}>SENSOR LAYOUT — {roadName} Bound</span>
+                {usWorking && <span style={{ background: '#14532d', color: '#4ade80', padding: '2px 8px', borderRadius: 10, fontSize: 9 }}>ONLINE</span>}
+                {!usWorking && <span style={{ background: '#7f1d1d', color: '#f87171', padding: '2px 8px', borderRadius: 10, fontSize: 9 }}>OFFLINE</span>}
+            </div>
+
+            {/* Physical road diagram */}
+            <div style={{ position: 'relative', marginBottom: 16 }}>
+                {/* Road lane representation */}
+                <div style={{
+                    background: '#1e293b',
+                    height: 60,
+                    borderRadius: 8,
+                    position: 'relative',
+                    border: '2px solid #475569'
+                }}>
+                    {/* Stop line */}
+                    <div style={{
+                        position: 'absolute',
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: 4,
+                        background: '#f87171',
+                        boxShadow: '0 0 8px #ef4444'
+                    }} />
+                    <div style={{
+                        position: 'absolute',
+                        right: 8,
+                        top: -18,
+                        fontSize: 8,
+                        color: '#f87171',
+                        fontWeight: 'bold'
+                    }}>STOP LINE</div>
+
+                    {/* US1 Sensor (5cm) */}
+                    <div style={{
+                        position: 'absolute',
+                        right: '12%',
+                        top: -20,
+                        transform: 'translateX(50%)'
+                    }}>
+                        <div style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: '50%',
+                            background: us1Stable ? '#7f1d1d' : '#14532d',
+                            border: `2px solid ${us1Stable ? '#ef4444' : '#22c55e'}`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            position: 'relative'
+                        }}>
+                            <span style={{ fontSize: 16 }}>{us1Stable ? '🔴' : '🟢'}</span>
+                        </div>
+                        <div style={{
+                            fontSize: 9,
+                            textAlign: 'center',
+                            marginTop: 4,
+                            color: us1Stable ? '#f87171' : '#4ade80',
+                            fontWeight: 'bold'
+                        }}>
+                            US1
+                        </div>
+                        <div style={{
+                            fontSize: 8,
+                            textAlign: 'center',
+                            color: '#64748b'
+                        }}>
+                            {us1Dist < 20 ? `${us1Dist}cm` : '—'} / 5cm
+                        </div>
+                    </div>
+
+                    {/* US2 Sensor (15cm - further back) */}
+                    <div style={{
+                        position: 'absolute',
+                        right: '35%',
+                        top: -20,
+                        transform: 'translateX(50%)'
+                    }}>
+                        <div style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: '50%',
+                            background: us2Stable ? (us1Stable ? '#7f1d1d' : '#3d2000') : '#14532d',
+                            border: `2px solid ${us2Stable ? (us1Stable ? '#ef4444' : '#f59e0b') : '#22c55e'}`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            opacity: us1Stable ? 1 : 0.6
+                        }}>
+                            <span style={{ fontSize: 16 }}>{us2Stable ? (us1Stable ? '🔴' : '⚠️') : '🟢'}</span>
+                        </div>
+                        <div style={{
+                            fontSize: 9,
+                            textAlign: 'center',
+                            marginTop: 4,
+                            color: us2Stable ? (us1Stable ? '#f87171' : '#fde047') : '#4ade80',
+                            fontWeight: 'bold'
+                        }}>
+                            US2
+                        </div>
+                        <div style={{
+                            fontSize: 8,
+                            textAlign: 'center',
+                            color: '#64748b'
+                        }}>
+                            {us2Dist < 30 ? `${us2Dist}cm` : '—'} / 15cm
+                        </div>
+                    </div>
+
+                    {/* Piezo sensor (under road) */}
+                    <div style={{
+                        position: 'absolute',
+                        left: '50%',
+                        bottom: -20,
+                        transform: 'translateX(-50%)'
+                    }}>
+                        <div style={{
+                            background: piezoActive ? '#3d2000' : '#1e293b',
+                            border: `1px solid ${piezoActive ? '#f59e0b' : '#334155'}`,
+                            borderRadius: 20,
+                            padding: '4px 12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6
+                        }}>
+                            <span>🚛</span>
+                            <span style={{ fontSize: 10, color: piezoActive ? '#fb923c' : '#64748b' }}>
+                                Piezo {piezoActive ? '● ACTIVE' : '○ IDLE'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Distance markers */}
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    marginTop: 28,
+                    paddingRight: '8%',
+                    gap: '23%',
+                    fontSize: 9,
+                    color: '#475569'
+                }}>
+                    <span>~5cm (detection zone)</span>
+                    <span>~15cm (queue backup)</span>
+                </div>
+            </div>
+
+            {/* Status summary */}
+            <div style={{
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+                marginTop: 8,
+                paddingTop: 8,
+                borderTop: '1px solid #1e293b'
+            }}>
+                <div style={{
+                    background: us1Stable ? '#7f1d1d' : '#14532d',
+                    borderRadius: 6,
+                    padding: '4px 10px',
+                    fontSize: 10,
+                    fontWeight: 'bold',
+                    color: us1Stable ? '#f87171' : '#4ade80'
+                }}>
+                    {us1Stable ? '🔴 VEHICLE AT US1' : '🟢 US1 CLEAR'}
+                </div>
+                <div style={{
+                    background: us2Stable ? (us1Stable ? '#7f1d1d' : '#3d2000') : '#14532d',
+                    borderRadius: 6,
+                    padding: '4px 10px',
+                    fontSize: 10,
+                    fontWeight: 'bold',
+                    color: us2Stable ? (us1Stable ? '#f87171' : '#fde047') : '#4ade80'
+                }}>
+                    {us2Stable 
+                        ? (us1Stable ? '🔴 QUEUE BACKED UP' : '⚠️ US2 ALONE (IGNORED)')
+                        : '🟢 US2 CLEAR'}
+                </div>
+                {piezoActive && (
+                    <div style={{
+                        background: '#3d2000',
+                        borderRadius: 6,
+                        padding: '4px 10px',
+                        fontSize: 10,
+                        fontWeight: 'bold',
+                        color: '#fb923c'
+                    }}>
+                        🚛 HEAVY VEHICLE (+3s)
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// Queue badge component
+const QueueBadge = ({ us1Stable, us2Stable, piezoActive }) => {
+    let bg, color, icon, label;
+    if (us1Stable && us2Stable && piezoActive) { bg='#4a0e0e'; color='#fca5a5'; icon='🔴🚛'; label='HEAVY + PIEZO (+9s)'; }
+    else if (us1Stable && us2Stable)          { bg='#7f1d1d'; color='#f87171'; icon='🔴'; label='HEAVY QUEUE (+6s)'; }
+    else if (us1Stable && piezoActive)         { bg='#3d2000'; color='#fb923c'; icon='🟡🚛'; label='LIGHT + PIEZO (+6s)'; }
+    else if (us1Stable)                        { bg='#713f12'; color='#fde047'; icon='🟡'; label='LIGHT QUEUE (+3s)'; }
+    else                                       { bg='#14532d'; color='#4ade80'; icon='🟢'; label='NO QUEUE (3s base)'; }
+    return (
+        <div style={{ background: bg, color, border: `1px solid ${color}44`,
+            padding: '6px 12px', borderRadius: 10, fontSize: 12, fontWeight: 'bold',
+            display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {icon} {label}
+        </div>
+    );
+};
+
+const ScenarioBadge = ({ scenario }) => {
+    const M = {
+        QUEUE_HEAVY_PIEZO: { bg: '#3d1000', color: '#fb923c', border: '#f59e0b', icon: '🚛🔴', label: 'HEAVY+PIEZO' },
+        QUEUE_HEAVY:       { bg: '#7f1d1d', color: '#f87171', border: '#ef4444', icon: '🔴', label: 'HEAVY QUEUE' },
+        QUEUE_LIGHT_PIEZO: { bg: '#3d2000', color: '#fb923c', border: '#f59e0b', icon: '🚛🟡', label: 'LIGHT+PIEZO' },
+        QUEUE_LIGHT:       { bg: '#713f12', color: '#fde047', border: '#f59e0b', icon: '🟡', label: 'LIGHT QUEUE' },
+        QUEUE_NONE:        { bg: '#14532d', color: '#4ade80', border: '#22c55e', icon: '🟢', label: 'NO QUEUE' },
+    };
+    const s = M[scenario] || M.QUEUE_NONE;
+    return (
+        <span style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}`,
+            padding: '2px 8px', borderRadius: 8, fontSize: 10, fontWeight: 'bold',
+            display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            {s.icon} {s.label}
+        </span>
+    );
+};
+
 const TrafficBadge = ({ level }) => {
     const M = {
         Heavy:   { bg: '#7f1d1d', color: '#f87171', border: '#ef4444' },
@@ -1017,41 +1259,6 @@ const TrafficBadge = ({ level }) => {
             padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 'bold' }}>
             {level || 'Unknown'}
         </span>
-    );
-};
-
-const ScenarioBadge = ({ scenario }) => {
-    const M = {
-        QUEUE_HEAVY_PIEZO: { bg: '#3d1000', color: '#fb923c', border: '#f59e0b', icon: '🚛🔴', label: 'HEAVY+PIEZO' },
-        QUEUE_HEAVY:       { bg: '#7f1d1d', color: '#f87171', border: '#ef4444', icon: '🔴', label: 'HEAVY QUEUE' },
-        QUEUE_LIGHT_PIEZO: { bg: '#3d2000', color: '#fb923c', border: '#f59e0b', icon: '🚛🟡', label: 'LIGHT+PIEZO' },
-        QUEUE_LIGHT:       { bg: '#713f12', color: '#fde047', border: '#f59e0b', icon: '🟡', label: 'LIGHT QUEUE' },
-        QUEUE_NONE:        { bg: '#14532d', color: '#4ade80', border: '#22c55e', icon: '🟢', label: 'NO QUEUE' },
-        GOOGLE_ONLY:       { bg: '#1e293b', color: '#94a3b8', border: '#475569', icon: '🗺️', label: 'GOOGLE ONLY' },
-        NO_DATA:           { bg: '#1e1e1e', color: '#6b7280', border: '#374151', icon: '❌', label: 'NO DATA' },
-        FALLBACK:          { bg: '#3d2000', color: '#fb923c', border: '#f59e0b', icon: '⚠️', label: 'FALLBACK' },
-    };
-    const s = M[scenario] || M.FALLBACK;
-    return (
-        <span style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}`,
-            padding: '2px 8px', borderRadius: 8, fontSize: 10, fontWeight: 'bold',
-            display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            {s.icon} {s.label}
-        </span>
-    );
-};
-
-const QueueBadge = ({ us1Stable, us2Stable }) => {
-    let bg, color, icon, label;
-    if (us1Stable && us2Stable) { bg='#7f1d1d'; color='#f87171'; icon='🔴'; label='HEAVY (+6s)'; }
-    else if (us1Stable)          { bg='#713f12'; color='#fde047'; icon='🟡'; label='LIGHT (+3s)'; }
-    else                         { bg='#14532d'; color='#4ade80'; icon='🟢'; label='NO TRAFFIC'; }
-    return (
-        <div style={{ background: bg, color, border: `1px solid ${color}44`,
-            padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 'bold',
-            display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            {icon} {label}
-        </div>
     );
 };
 
@@ -1306,8 +1513,8 @@ export default function AdminDashboard({ user, onLogout }) {
                 </div>
             )}
 
-            {/* Road cards */}
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(380px,1fr))', gap:16, marginBottom:22 }}>
+            {/* Road cards with Sensor Visualization */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(450px,1fr))', gap:16, marginBottom:22 }}>
                 {ROADS.map(road => {
                     const phase       = livePhase[road] || 'RED';
                     const count       = liveCD[road] || 0;
@@ -1322,13 +1529,13 @@ export default function AdminDashboard({ user, onLogout }) {
                     const piezoActive = piezoRoad.heavy === true;
                     const heavyHere   = piezoActive || (heavyActive[road] || false);
 
-                    const ql = us.us1Stable && us.us2Stable ? 'Heavy' : us.us1Stable ? 'Light' : 'None';
-                    let greenLabel = '';
-                    if (ql === 'Heavy' && piezoActive) greenLabel = `US1+US2+Piezo → ${roadGreen}s (3+6+3)`;
-                    else if (ql === 'Heavy')           greenLabel = `US1+US2 → ${roadGreen}s (3+6)`;
-                    else if (ql === 'Light' && piezoActive) greenLabel = `US1+Piezo → ${roadGreen}s (3+3+3)`;
-                    else if (ql === 'Light')           greenLabel = `US1 only → ${roadGreen}s (3+3)`;
-                    else                               greenLabel = `No queue → ${roadGreen}s (base)`;
+                    // Calculate green time bonus explanation
+                    let greenBonus = '';
+                    if (us.us1Stable && us.us2Stable && piezoActive) greenBonus = 'Base 3s + Heavy 6s + Piezo 3s = 12s';
+                    else if (us.us1Stable && us.us2Stable) greenBonus = 'Base 3s + Heavy 6s = 9s';
+                    else if (us.us1Stable && piezoActive) greenBonus = 'Base 3s + Light 3s + Piezo 3s = 9s';
+                    else if (us.us1Stable) greenBonus = 'Base 3s + Light 3s = 6s';
+                    else greenBonus = 'Base 3s (no queue)';
 
                     return (
                         <div key={road} style={{
@@ -1370,77 +1577,31 @@ export default function AdminDashboard({ user, onLogout }) {
                                         </div>
                                     </div>
 
-                                    {/* Dual Ultrasonic Queue Sensors */}
-                                    <div style={{ background:'#0f172a', borderRadius:8, padding:10, marginBottom:8 }}>
-                                        <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
-                                            <span>📡</span>
-                                            <span style={{ fontSize:11, color:'#64748b' }}>Ultrasonic Queue Sensors</span>
-                                            <span style={{ fontSize:10, padding:'1px 6px', borderRadius:6,
-                                                background: usWorking[road] ? '#14532d' : '#1e293b',
-                                                color: usWorking[road] ? '#4ade80' : '#475569' }}>
-                                                {usWorking[road] ? '● ACTIVE' : '● OFFLINE'}
-                                            </span>
-                                        </div>
-                                        <div style={{ display:'flex', gap:8, marginBottom:8, flexWrap:'wrap' }}>
-                                            {[
-                                                { label:'US1 (5cm stop)', stable: us.us1Stable, raw: us.us1Raw },
-                                                { label:'US2 (15cm back)', stable: us.us2Stable, raw: us.us2Raw },
-                                            ].map(s => (
-                                                <div key={s.label} style={{
-                                                    background: s.stable ? '#7f1d1d' : '#1e293b',
-                                                    color: s.stable ? '#f87171' : '#475569',
-                                                    border: `1px solid ${s.stable ? '#ef4444' : '#334155'}`,
-                                                    borderRadius:8, padding:'4px 10px', fontSize:10, fontWeight:'bold'
-                                                }}>
-                                                    {s.stable ? '🔴' : '🟢'} {s.label}: {s.stable ? `BLOCKED (${s.raw}cm)` : `CLEAR (${s.raw}cm)`}
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <QueueBadge us1Stable={us.us1Stable} us2Stable={us.us2Stable} />
-                                        <div style={{ fontSize:10, color:'#64748b', marginTop:5 }}>{greenLabel}</div>
-                                        {us.us2Stable && !us.us1Stable && (
-                                            <div style={{ fontSize:10, color:'#f59e0b', marginTop:4 }}>
-                                                ⚠️ US2 blocked but US1 clear — invalid queue, ignored
-                                            </div>
-                                        )}
-                                    </div>
+                                    {/* Sensor Visualization - NEW! Shows physical placement */}
+                                    <SensorVisualization 
+                                        us1Stable={us.us1Stable}
+                                        us2Stable={us.us2Stable}
+                                        us1Raw={us.us1Raw}
+                                        us2Raw={us.us2Raw}
+                                        usWorking={usWorking[road]}
+                                        piezoActive={piezoActive}
+                                        roadName={road}
+                                    />
 
-                                    {/* Piezo */}
-                                    <div style={{
-                                        background: piezoActive ? '#1a1000' : '#0f172a',
-                                        border: `1px solid ${piezoActive ? '#f59e0b' : '#1e293b'}`,
-                                        borderRadius:8, padding:10, marginBottom:8
-                                    }}>
-                                        <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                                            <span style={{ fontSize:13 }}>🚛</span>
-                                            <span style={{ fontSize:11, color:'#64748b' }}>Piezo Sensor</span>
-                                            <span style={{ fontSize:10, padding:'1px 8px', borderRadius:6,
-                                                background: piezoActive ? '#3d2000' : '#1e293b',
-                                                color: piezoActive ? '#fb923c' : '#475569',
-                                                border: `1px solid ${piezoActive ? '#f59e0b' : '#334155'}`, fontWeight:'bold' }}>
-                                                {piezoActive ? '● HEAVY VEHICLE' : '● NONE'}
-                                            </span>
-                                        </div>
-                                        <div style={{ fontSize:10, color:'#64748b', marginTop:4 }}>
-                                            {piezoActive
-                                                ? 'Heavy vehicle confirmed (US1+vibration). +3s green bonus. Clears after green cycle.'
-                                                : 'Monitoring. US1 must be stable to confirm heavy vehicle.'}
+                                    {/* Queue Status & Green Time */}
+                                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+                                        <QueueBadge 
+                                            us1Stable={us.us1Stable} 
+                                            us2Stable={us.us2Stable}
+                                            piezoActive={piezoActive}
+                                        />
+                                        <div style={{ fontSize:10, color:'#60a5fa', background:'#1e3a5f', padding:'4px 8px', borderRadius:6 }}>
+                                            🟢 {greenBonus}
                                         </div>
                                     </div>
 
-                                    {/* Weather */}
-                                    <div style={{ background:'#0f172a', borderRadius:8, padding:10, marginBottom:8 }}>
-                                        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                                            <span>{rainDetected ? '🌧️' : '☀️'}</span>
-                                            <span style={{ fontSize:11, color:'#64748b' }}>Weather:</span>
-                                            <span style={{ fontSize:11, color:rainDetected?'#60a5fa':'#4ade80', fontWeight:'bold' }}>
-                                                {rainDetected ? `Raining — Yellow ${yellowTime}s` : `Dry — Yellow ${yellowTime}s`}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    {/* Next intersection */}
-                                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+                                    {/* Next intersection traffic */}
+                                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8, background:'#0f172a', padding:8, borderRadius:8 }}>
                                         <span style={{ fontSize:13 }}>🗺️</span>
                                         <span style={{ fontSize:11, color:'#64748b' }}>Next Intersection:</span>
                                         <TrafficBadge level={google} />
@@ -1483,8 +1644,8 @@ export default function AdminDashboard({ user, onLogout }) {
                         { label:'RED for Others', value: redOthers > 0 ? `${redOthers}s (dynamic)` : '—', ok: redOthers > 0 },
                         { label:'Sensors Active', value: `${activeSensors}/4`,                          ok: activeSensors > 0 },
                         { label:'Google Traffic', value: googleWorking ? 'Active' : 'Disabled',         ok: googleWorking },
-                        { label:'Green Base',     value: '3s + Light+3s + Heavy+6s + Piezo+3s',        ok: true },
-                        { label:'Queue Rule',     value: 'US1 5s stable < 7cm → confirmed vehicle',    ok: true },
+                        { label:'US1 Threshold',  value: '< 7cm for 5s → vehicle',                     ok: true },
+                        { label:'Queue Rule',     value: 'US2 only valid if US1 blocked',              ok: true },
                     ].map(m => (
                         <div key={m.label} style={{ background:'#0f172a', borderRadius:10, padding:12, border:`1px solid ${m.ok?'#22c55e33':'#ef444433'}` }}>
                             <div style={{ fontSize:10, color:'#64748b', marginBottom:4, letterSpacing:1 }}>{m.label}</div>
@@ -1502,7 +1663,7 @@ export default function AdminDashboard({ user, onLogout }) {
                         <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
                             <thead>
                                 <tr style={{ borderBottom:'1px solid #1e3a5f' }}>
-                                    {['Rank','Road','Scenario','Queue','US1 (5cm)','US2 (15cm)','Piezo','Rain','Next Traffic','Score','Green','LED'].map(h => (
+                                    {['Rank','Road','Scenario','US1','US2','Piezo','Queue','Next Traffic','Green','LED'].map(h => (
                                         <th key={h} style={{ padding:'8px 10px', textAlign:'left', color:'#475569', fontSize:10, letterSpacing:1, whiteSpace:'nowrap' }}>{h}</th>
                                     ))}
                                 </tr>
@@ -1517,27 +1678,23 @@ export default function AdminDashboard({ user, onLogout }) {
                                             <td style={{ padding:'8px 10px', color: i===0?'#4ade80':'#64748b', fontWeight:'bold' }}>#{i+1}</td>
                                             <td style={{ padding:'8px 10px', fontWeight:'bold', color: i===0?'#e2e8f0':'#94a3b8' }}>{p.road}</td>
                                             <td style={{ padding:'8px 10px' }}>{p.sensorScenario ? <ScenarioBadge scenario={p.sensorScenario} /> : '—'}</td>
-                                            <td style={{ padding:'8px 10px', color: qlRoad==='Heavy'?'#f87171':qlRoad==='Light'?'#fde047':'#4ade80', fontWeight:'bold' }}>
-                                                {qlRoad==='Heavy'?'🔴 HEAVY':qlRoad==='Light'?'🟡 LIGHT':'🟢 NONE'}
-                                            </td>
                                             <td style={{ padding:'8px 10px', color: usRoad.us1Stable?'#f87171':'#4ade80', fontWeight:'bold' }}>
-                                                {usRoad.us1Stable ? '🔴 BLOCKED' : '🟢 CLEAR'}
+                                                {usRoad.us1Stable ? '🔴 BLOCKED' : '🟢 CLEAR'} ({usRoad.us1Raw?.toFixed(0) || '?'}cm)
                                             </td>
-                                            <td style={{ padding:'8px 10px', color: usRoad.us2Stable?'#f87171':'#4ade80', fontWeight:'bold' }}>
-                                                {usRoad.us2Stable ? '🔴 BLOCKED' : '🟢 CLEAR'}
+                                            <td style={{ padding:'8px 10px', color: usRoad.us2Stable && usRoad.us1Stable?'#f87171':(usRoad.us2Stable?'#fde047':'#4ade80'), fontWeight:'bold' }}>
+                                                {usRoad.us2Stable 
+                                                    ? (usRoad.us1Stable ? '🔴 BLOCKED' : '⚠️ IGNORED')
+                                                    : '🟢 CLEAR'} ({usRoad.us2Raw?.toFixed(0) || '?'}cm)
                                             </td>
                                             <td style={{ padding:'8px 10px' }}>
                                                 <span style={{ color: pz?'#fb923c':'#475569', fontWeight:'bold', fontSize:11 }}>
                                                     {pz ? '🚛 YES (+3s)' : '—'}
                                                 </span>
                                             </td>
-                                            <td style={{ padding:'8px 10px', color: rainDetected?'#60a5fa':'#4ade80', fontSize:11 }}>
-                                                {rainDetected ? `🌧️ ${yellowTime}s` : `☀️ ${yellowTime}s`}
+                                            <td style={{ padding:'8px 10px', color: qlRoad==='Heavy'?'#f87171':qlRoad==='Light'?'#fde047':'#4ade80', fontWeight:'bold' }}>
+                                                {qlRoad}
                                             </td>
                                             <td style={{ padding:'8px 10px' }}><TrafficBadge level={p.traffic} /></td>
-                                            <td style={{ padding:'8px 10px', color: p.score > 0?'#4ade80':p.score<0?'#f87171':'#94a3b8', fontWeight:'bold' }}>
-                                                {typeof p.score === 'number' ? p.score.toFixed(0) : '—'}
-                                            </td>
                                             <td style={{ padding:'8px 10px', color: i===0?'#4ade80':'#94a3b8', fontWeight: i===0?'bold':'normal' }}>
                                                 {p.greenTime ? `${Math.round(p.greenTime)}s` : '—'}
                                             </td>
@@ -1556,130 +1713,23 @@ export default function AdminDashboard({ user, onLogout }) {
                             </tbody>
                         </table>
                     </div>
-                    <div style={{ marginTop:12, padding:10, background:'#0f172a', borderRadius:8, fontSize:11, color:'#64748b', border:'1px solid #1e3a5f' }}>
-                        🔴 <strong style={{ color:'#94a3b8' }}>Dynamic RED:</strong>&nbsp;
-                        {winner && decision?.greenDuration
-                            ? `${decision.greenDuration}s green + ${decision.yellowDuration || yellowTime}s yellow = ${decision.redForOthers}s`
-                            : 'Calculated each cycle'}
-                    </div>
                 </div>
             )}
 
             {/* System rules */}
             <div style={{ background:'linear-gradient(160deg,#1a2540,#111827)', borderRadius:16, padding:16, marginTop:8, border:'1px solid #1e3a5f' }}>
-                <h3 style={{ margin:'0 0 12px', color:'#94a3b8', fontSize:13 }}>📋 System Rules (v8.0)</h3>
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))', gap:10, fontSize:11, color:'#64748b' }}>
-                    <div>📡 <strong style={{ color:'#60a5fa' }}>US1 (5cm)</strong>: vehicle confirmed when distance &lt; 7cm for 5 continuous seconds</div>
-                    <div>📡 <strong style={{ color:'#60a5fa' }}>US2 (15cm)</strong>: blocked ONLY after US1 is already stable (queue grew back)</div>
-                    <div>🟢 <strong>GREEN</strong>: 3s base | US1 only → +3s=6s | US1+US2 → +6s=9s | +Piezo → +3s more</div>
-                    <div>🚫 <strong>US2 alone</strong>: ignored (no queue if US1 is clear)</div>
+                <h3 style={{ margin:'0 0 12px', color:'#94a3b8', fontSize:13 }}>📋 System Rules (v8.0 - Dual Ultrasonic)</h3>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))', gap:10, fontSize:11, color:'#64748b' }}>
+                    <div>📡 <strong style={{ color:'#60a5fa' }}>US1 (5cm)</strong>: distance &lt; 7cm for 5s → vehicle confirmed</div>
+                    <div>📡 <strong style={{ color:'#60a5fa' }}>US2 (15cm)</strong>: checked ONLY after US1 is stable (queue growth)</div>
+                    <div>🟢 <strong>GREEN calculation</strong>: 3s base + (US1?3s:0) + (US2?3s:0) + (Piezo?3s:0)</div>
+                    <div>🚫 <strong>US2 alone</strong>: COMPLETELY IGNORED (no queue if US1 clear)</div>
                     <div>🚛 <strong>Piezo</strong>: confirms heavy vehicle ONLY when US1 is also stable</div>
-                    <div>🟡 <strong>YELLOW</strong>: 3s dry, 5s rain | Sequence: RED→pre-YELLOW→GREEN→YELLOW→RED</div>
+                    <div>🟡 <strong>YELLOW</strong>: 3s dry, 5s rain | Sequence: RED→YELLOW→GREEN→YELLOW→RED</div>
                     <div>🔴 <strong>RED (others)</strong>: dynamic = winner GREEN + YELLOW</div>
                     <div>🔁 <strong>Fallback</strong>: no sensors → round-robin N→S→E→W equal 3s each</div>
                     <div>⚡ <strong>ESP32 Offline</strong>: excluded from winning — synthetic RED applied</div>
-                    <div>🚶 <strong>Pedestrian</strong>: immediate crossing during RED if &gt;3s remain; waits during GREEN/YELLOW</div>
                 </div>
-            </div>
-
-            {/* Traffic analytics */}
-            <div style={{ background:'linear-gradient(160deg,#1a2540,#111827)', borderRadius:16, padding:20, marginTop:22, border:'1px solid #1e3a5f' }}>
-                <h3 style={{ margin:'0 0 6px', color:'#e2e8f0', fontSize:16 }}>🗺️ Traffic Analytics — Nawinna Junction</h3>
-                <p style={{ color:'#475569', fontSize:12, margin:'0 0 16px' }}>Live data to help road users choose the best time and route to travel.</p>
-                <div style={{ display:'flex', gap:8, marginBottom:18, flexWrap:'wrap' }}>
-                    {[
-                        { id:'livecongestion', label:'🚦 Live Road Status' },
-                        { id:'besttimes',      label:'⏰ Best Times to Travel' },
-                        { id:'roadhealth',     label:'🛣️ Road Performance' },
-                    ].map(tab => (
-                        <button key={tab.id} onClick={() => setAnalyticsTab(tab.id)}
-                            style={{ background: analyticsTab===tab.id?'#1e3a5f':'#0f172a',
-                                color: analyticsTab===tab.id?'#60a5fa':'#475569',
-                                border: `1px solid ${analyticsTab===tab.id?'#3b82f6':'#334155'}`,
-                                padding:'7px 16px', borderRadius:8, cursor:'pointer', fontSize:12, fontWeight:'bold' }}>
-                            {tab.label}
-                        </button>
-                    ))}
-                </div>
-
-                {analyticsTab === 'livecongestion' && (
-                    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:12 }}>
-                        {ROADS.map(road => {
-                            const us     = usData[road] || {};
-                            const google = googleTraffic[road] || 'Unknown';
-                            const espUp  = espOnline[road] !== false;
-                            const ql     = us.us1Stable && us.us2Stable ? 'Heavy' : us.us1Stable ? 'Light' : 'None';
-
-                            let cong = 'Low', waitEst = 'Under 1 min', tip = 'Good to travel', barColor = '#22c55e';
-                            if (!espUp) { cong='Unknown'; waitEst='Sensor offline'; tip='Proceed with caution'; barColor='#64748b'; }
-                            else if (ql==='Heavy' || google==='Heavy') { cong='Heavy'; waitEst=`${(greenTime[road]||9)+yellowTime}s wait`; tip='Expect delays — alternate route'; barColor='#ef4444'; }
-                            else if (ql==='Light' || google==='Medium') { cong='Moderate'; waitEst=`${greenTime[road]||6}s wait`; tip='Some traffic — normal wait'; barColor='#f59e0b'; }
-
-                            return (
-                                <div key={road} style={{ background:'#0f172a', borderRadius:12, padding:14, border:`2px solid ${barColor}44` }}>
-                                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-                                        <span style={{ fontWeight:'bold', color:'#e2e8f0', fontSize:14 }}>{road} Road</span>
-                                        <span style={{ background:`${barColor}22`, color:barColor, border:`1px solid ${barColor}`, padding:'2px 8px', borderRadius:6, fontSize:10, fontWeight:'bold' }}>{cong}</span>
-                                    </div>
-                                    <div style={{ fontSize:12, color:'#94a3b8', marginBottom:4 }}>⏳ <strong style={{ color:barColor }}>{waitEst}</strong></div>
-                                    <div style={{ fontSize:11, color:'#64748b' }}>{tip}</div>
-                                    <div style={{ background:'#1e293b', borderRadius:4, height:6, marginTop:8 }}>
-                                        <div style={{ width:cong==='Heavy'?'85%':cong==='Moderate'?'50%':cong==='Unknown'?'30%':'15%', background:barColor, height:'100%', borderRadius:4, transition:'width 1s' }} />
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-
-                {analyticsTab === 'besttimes' && (
-                    <div>
-                        {analyticsData.peakHours && analyticsData.peakHours.filter(h => h.North>0||h.South>0||h.East>0||h.West>0).length > 0 ? (
-                            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))', gap:8 }}>
-                                {analyticsData.peakHours.filter(h => h.North>0||h.South>0||h.East>0||h.West>0).map(h => {
-                                    const avg = Math.round((h.North+h.South+h.East+h.West)/4);
-                                    const color = avg>60?'#ef4444':avg>30?'#f59e0b':'#22c55e';
-                                    const label = avg>60?'Peak—avoid':avg>30?'Moderate':'✅ Good';
-                                    return (
-                                        <div key={h.hour} style={{ background:'#0f172a', borderRadius:8, padding:10, border:`1px solid ${color}33`, textAlign:'center' }}>
-                                            <div style={{ fontSize:14, fontWeight:'bold', color:'#e2e8f0' }}>{String(h.hour).padStart(2,'0')}:00</div>
-                                            <div style={{ fontSize:11, color, fontWeight:'bold', marginTop:3 }}>{label}</div>
-                                            <div style={{ background:'#1e293b', borderRadius:3, height:5, marginTop:5 }}>
-                                                <div style={{ width:`${avg}%`, background:color, height:'100%', borderRadius:3 }} />
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        ) : (
-                            <div style={{ color:'#475569', fontSize:12, padding:20, textAlign:'center' }}>
-                                📊 Collecting historical data... Check back after a few hours.
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {analyticsTab === 'roadhealth' && (
-                    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))', gap:12 }}>
-                        {analyticsData.roadPerf && analyticsData.roadPerf.length > 0 ? analyticsData.roadPerf.map(r => {
-                            const color = r.avgWaitTime>30?'#ef4444':r.avgWaitTime>15?'#f59e0b':'#22c55e';
-                            return (
-                                <div key={r.road} style={{ background:'#0f172a', borderRadius:12, padding:14, border:`1px solid ${color}44` }}>
-                                    <div style={{ fontWeight:'bold', color:'#e2e8f0', marginBottom:10, fontSize:14 }}>{r.road} Road</div>
-                                    <div style={{ fontSize:12, color:'#64748b', lineHeight:2 }}>
-                                        <div>⏳ Avg wait: <strong style={{ color }}>{r.avgWaitTime}s</strong></div>
-                                        <div>🟢 Avg green: <strong style={{ color:'#22c55e' }}>{r.avgGreenTime}s</strong></div>
-                                        <div>🏆 Priority wins: <strong style={{ color:'#60a5fa' }}>{r.priorityWins}</strong></div>
-                                        <div>🔴 Heavy events: {r.heavyTrafficCount}</div>
-                                        <div>⚡ Efficiency: <strong style={{ color:'#a78bfa' }}>{r.efficiency}%</strong></div>
-                                    </div>
-                                </div>
-                            );
-                        }) : (
-                            <div style={{ color:'#475569', fontSize:12, padding:20 }}>Collecting road performance data...</div>
-                        )}
-                    </div>
-                )}
             </div>
 
             <div style={{ textAlign:'center', marginTop:28, color:'#1e3a5f', fontSize:11 }}>
