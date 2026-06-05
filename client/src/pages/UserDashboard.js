@@ -326,14 +326,7 @@ export default function UserDashboard({ user, onLogout }) {
                 </button>
             </div>
 
-            {notification && (
-                <div style={{
-                    position: 'fixed', top: 20, right: 20, zIndex: 9999,
-                    background: notification.type === 'success' ? '#14532d' : '#7f1d1d',
-                    border: `1px solid ${notification.type === 'success' ? '#22c55e' : '#ef4444'}`,
-                    color: 'white', padding: '12px 20px', borderRadius: 10, fontSize: 14, fontWeight: 'bold'
-                }}>{notification.msg}</div>
-            )}
+            
 
             {/* ── HEADER ── */}
             <div style={{ textAlign: 'center', marginBottom: 24 }}>
