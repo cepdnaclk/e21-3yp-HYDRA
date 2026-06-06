@@ -774,16 +774,13 @@
 
 
 
-// server/index.js — HYDRA v8.0 Dual Ultrasonic Queue Detection
-// Changes from v7.0:
-//   - Removed: old single ultrasonic distance sensor (sensorData, sensorWorking)
-//   - Removed: IR sensor logic (irData, irUpdate)
-//   - Removed: IR/ULTRASONIC mode switching
-//   - Added: dual ultrasonic queue detection per road (usData, usWorking)
-//   - US1 (5cm from stop line) + US2 (15cm from stop line), both point across 7cm road
-//   - Stable = distance < 7cm held for ≥ 5s (confirmed by ESP32 before publishing)
-//   - Fallback: round-robin North→South→East→West (handled in signalDecision)
-//   - Piezo: unchanged, still requires US1 to be stable
+// server/index.js — HYDRA v8.0 FIXED
+// KEY FIXES:
+//   1. Handles traffic/us/<road>  (new dual ultrasonic format from v8.0 ESP32)
+//   2. Also handles traffic/ultrasonic/<road> + traffic/ir/<road> as legacy aliases
+//      → converts them into usData so old and new ESP32 firmware both work
+//   3. fullState now broadcasts usData + usWorking correctly
+//   4. Admin dashboard can see live sensor data
 
 'use strict';
 
@@ -802,11 +799,8 @@ const UltrasonicData = require('./models/UltrasonicData');
 const { getAllTrafficConditions } = require('./services/googleTrafficService');
 const { makeSignalDecision } = require('./logic/signalDecision');
 const {
-    saveAnalyticsRecord,
-    getPeakHourAnalysis,
-    getRoadPerformance,
-    getLiveCongestionTrend,
-    getSystemEfficiency
+    saveAnalyticsRecord, getPeakHourAnalysis, getRoadPerformance,
+    getLiveCongestionTrend, getSystemEfficiency
 } = require('./services/analyticsService');
 
 const app        = express();
@@ -831,38 +825,36 @@ mongoose.connect(process.env.MONGODB_URI)
 // ════════════════════════════════════════════════════════════════════════════
 const ROADS = ['North', 'South', 'East', 'West'];
 
-// ── Dual ultrasonic queue state ───────────────────────────────────────────────
-// us1Stable: US1 (5cm from stop line) has been blocked < 7cm for ≥ 5s
-// us2Stable: US2 (15cm from stop line) has been blocked < 7cm for ≥ 5s
-// us1Raw / us2Raw: latest raw distance reading for dashboard display
+// ── Dual ultrasonic state ─────────────────────────────────────────────────────
+// Populated by: traffic/us/<road>  (new) OR  traffic/ir/<road> (legacy alias)
 let usData = {
     North: { us1Stable: false, us2Stable: false, us1Raw: 999, us2Raw: 999 },
     South: { us1Stable: false, us2Stable: false, us1Raw: 999, us2Raw: 999 },
     East:  { us1Stable: false, us2Stable: false, us1Raw: 999, us2Raw: 999 },
     West:  { us1Stable: false, us2Stable: false, us1Raw: 999, us2Raw: 999 }
 };
+let usWorking  = { North: false, South: false, East: false, West: false };
 
-// Whether each ESP32 is sending us data at all
-let usWorking = { North: false, South: false, East: false, West: false };
+// ── Legacy: raw distance from traffic/ultrasonic/<road> ───────────────────────
+// Kept so legacy ESP32 still shows something on dashboard
+let sensorData   = { North: 5000, South: 5000, East: 5000, West: 5000 };
 
 // ── Google traffic ────────────────────────────────────────────────────────────
 let googleTraffic = { North: 'Unknown', South: 'Unknown', East: 'Unknown', West: 'Unknown' };
 let googleWorking = false;
 
-// ── Live signal state ─────────────────────────────────────────────────────────
+// ── Signal state ──────────────────────────────────────────────────────────────
 let liveSignalState = { North: 'RED', South: 'RED', East: 'RED', West: 'RED' };
 let liveCountdown   = { North: 0,     South: 0,     East: 0,     West: 0 };
 let livePhase       = { North: 'RED', South: 'RED', East: 'RED', West: 'RED' };
 let latestDecision  = null;
 let forceOverride   = null;
+let currentWinner   = null;
+let phaseTimer      = null;
+let currentPhase    = 'RED';
 
-let currentWinner = null;
-let phaseTimer    = null;
-let currentPhase  = 'RED';
-
-// ── Piezo state (unchanged from v7.0) ────────────────────────────────────────
+// ── Piezo ─────────────────────────────────────────────────────────────────────
 const PIEZO_SAFETY_WINDOW_MS = 10 * 60 * 1000;
-
 let piezoData = {
     North: { heavy: false, timestamp: 0, locked: false },
     South: { heavy: false, timestamp: 0, locked: false },
@@ -885,7 +877,7 @@ let pedStatus = {
 let pedPressedDuringPhase = { North: null, South: null, East: null, West: null };
 let pedCrossingTimers     = {};
 
-// ── Green / red time ──────────────────────────────────────────────────────────
+// ── Green/Red time ────────────────────────────────────────────────────────────
 let greenTime = { North: 3, South: 3, East: 3, West: 3 };
 let redTime   = 3;
 
@@ -894,7 +886,7 @@ const ESP32_TIMEOUT_MS = 20 * 60 * 1000;
 let espLastSeen = { North: Date.now(), South: Date.now(), East: Date.now(), West: Date.now() };
 let espOnline   = { North: true, South: true, East: true, West: true };
 
-// ── Piezo safety release ──────────────────────────────────────────────────────
+// ── Piezo clear ───────────────────────────────────────────────────────────────
 function clearPiezoForRoad(road) {
     if (!ROADS.includes(road)) return;
     piezoData[road] = { heavy: false, timestamp: 0, locked: false };
@@ -904,7 +896,6 @@ function clearPiezoForRoad(road) {
     io.emit('heavyVehicleUpdate', { road, active: false });
     broadcastFullState();
 }
-
 setInterval(() => {
     const now = Date.now();
     ROADS.forEach(road => {
@@ -919,9 +910,8 @@ setInterval(() => {
 // MQTT BROKER
 // ════════════════════════════════════════════════════════════════════════════
 const mqttServer = net.createServer(aedes.handle);
-
-aedes.on('client', c => console.log(`🔌  ESP32 Connected: ${c ? c.id : 'Unknown'}`));
-aedes.on('clientDisconnect', c => console.log(`📴  ESP32 Disconnected: ${c ? c.id : 'Unknown'}`));
+aedes.on('client',           c => console.log(`🔌  ESP32 Connected: ${c ? c.id : '?'}`));
+aedes.on('clientDisconnect', c => console.log(`📴  ESP32 Disconnected: ${c ? c.id : '?'}`));
 
 // ── Pedestrian helpers ────────────────────────────────────────────────────────
 function _startPedCrossing(road, durationSec) {
@@ -951,12 +941,8 @@ function _startPedCrossing(road, durationSec) {
         }
     }, 1000);
 }
-
 function _endPedCrossing(road) {
-    if (pedCrossingTimers[road]) {
-        clearInterval(pedCrossingTimers[road]);
-        pedCrossingTimers[road] = null;
-    }
+    if (pedCrossingTimers[road]) { clearInterval(pedCrossingTimers[road]); pedCrossingTimers[road] = null; }
     pedStatus[road].crossing  = false;
     pedStatus[road].requested = false;
     pedStatus[road].duration  = 0;
@@ -976,7 +962,7 @@ aedes.on('publish', async (packet, client) => {
     const topic   = packet.topic;
     const payload = packet.payload.toString();
 
-    // Update ESP32 last-seen
+    // Update ESP32 last-seen based on any message from that road
     const parts = topic.split('/');
     if (parts.length >= 3 && ROADS.includes(parts[2])) {
         const road = parts[2];
@@ -988,10 +974,10 @@ aedes.on('publish', async (packet, client) => {
         }
     }
 
-    // ── Dual Ultrasonic Queue Data ────────────────────────────────────────────
-    // Topic: traffic/us/<road>
-    // Payload: { road, us1Stable, us2Stable, us1Raw, us2Raw, queueLevel }
-    // us1Stable/us2Stable: boolean — ESP32 confirmed stable block for ≥ 5s
+    // ══════════════════════════════════════════════════════════════════════
+    // NEW FORMAT: traffic/us/<road>
+    // Published by ESP32 v8.0 with dual ultrasonic queue detection
+    // ══════════════════════════════════════════════════════════════════════
     if (topic.startsWith('traffic/us/')) {
         try {
             const data = JSON.parse(payload);
@@ -1001,23 +987,86 @@ aedes.on('publish', async (packet, client) => {
             usData[road] = {
                 us1Stable: data.us1Stable || false,
                 us2Stable: data.us2Stable || false,
-                us1Raw:    data.us1Raw    !== undefined ? data.us1Raw : 999,
-                us2Raw:    data.us2Raw    !== undefined ? data.us2Raw : 999
+                us1Raw:    data.us1Raw !== undefined ? data.us1Raw : 999,
+                us2Raw:    data.us2Raw !== undefined ? data.us2Raw : 999
             };
             usWorking[road] = true;
 
-            // Update greenTime for this road based on queue
             const ql = data.queueLevel || 'None';
-            if (ql === 'Heavy')     greenTime[road] = 9;
+            if      (ql === 'Heavy') greenTime[road] = 9;
             else if (ql === 'Light') greenTime[road] = 6;
             else                     greenTime[road] = 3;
 
-            console.log(`📡 US [${road}]: US1=${data.us1Stable ? 'BLOCKED' : 'clear'} ` +
-                        `US2=${data.us2Stable ? 'BLOCKED' : 'clear'} → ${ql} ` +
-                        `(US1raw=${data.us1Raw}cm US2raw=${data.us2Raw}cm)`);
+            console.log(`📡 US [${road}]: US1=${data.us1Stable?'STABLE':'clear'} ` +
+                        `US2=${data.us2Stable?'STABLE':'clear'} → ${ql} ` +
+                        `(raw: US1=${data.us1Raw}cm US2=${data.us2Raw}cm)`);
 
             io.emit('usUpdate', { road, ...usData[road], queueLevel: ql });
+            broadcastFullState();
         } catch (e) { console.error('⚠️ US parse error:', e.message); }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // LEGACY ALIAS: traffic/ultrasonic/<road>
+    // Published by OLD ESP32 firmware. Convert to usData using distance.
+    // Distance < 7cm → treat as US1 stable (light traffic at minimum)
+    // ══════════════════════════════════════════════════════════════════════
+    if (topic.startsWith('traffic/ultrasonic/')) {
+        try {
+            const data = JSON.parse(payload);
+            const road = topic.split('/')[2];
+            if (!ROADS.includes(road)) return;
+
+            const dist = data.distanceCm || 5000;
+            sensorData[road] = dist;
+
+            // Convert distance to us1Stable approximation:
+            // dist < 7  → vehicle confirmed at stop line (light at minimum)
+            // dist >= 7 → no confirmed vehicle
+            const legacyUS1 = (dist < 7);
+            if (!usWorking[road]) {
+                // Only set if no new-format data is coming in
+                usData[road].us1Raw = dist;
+                usData[road].us1Stable = legacyUS1;
+            }
+
+            usWorking[road] = true;
+            console.log(`📡 [LEGACY] Ultrasonic [${road}]: ${dist}cm`);
+            io.emit('sensorUpdate', { road, distanceCm: dist });
+        } catch (e) { console.error('⚠️ Legacy ultrasonic parse error:', e.message); }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // LEGACY ALIAS: traffic/ir/<road>
+    // Published by OLD ESP32 firmware. Convert ir1Blocked/ir2Blocked → usData.
+    // ══════════════════════════════════════════════════════════════════════
+    if (topic.startsWith('traffic/ir/')) {
+        try {
+            const data = JSON.parse(payload);
+            const road = topic.split('/')[2];
+            if (!ROADS.includes(road)) return;
+
+            const ir1 = data.ir1Blocked || false;
+            const ir2 = data.ir2Blocked || false;
+            const ql  = data.queueLevel || 'None';
+
+            // Map IR to usData (IR1 → US1, IR2 → US2)
+            usData[road] = {
+                ...usData[road],
+                us1Stable: ir1,
+                us2Stable: ir1 && ir2,  // US2 only valid if US1 also blocked
+                us1Raw:    ir1 ? 5 : 999,
+                us2Raw:    ir2 ? 5 : 999
+            };
+            usWorking[road] = true;
+
+            if      (ql === 'Heavy') greenTime[road] = 9;
+            else if (ql === 'Light') greenTime[road] = 6;
+            else                     greenTime[road] = 3;
+
+            console.log(`🔦 [LEGACY] IR [${road}]: IR1=${ir1?'BLK':'CLR'} IR2=${ir2?'BLK':'CLR'} → ${ql} (mapped to usData)`);
+            io.emit('usUpdate', { road, ...usData[road], queueLevel: ql });
+        } catch (e) { console.error('⚠️ Legacy IR parse error:', e.message); }
     }
 
     // ── Piezo ─────────────────────────────────────────────────────────────────
@@ -1027,13 +1076,13 @@ aedes.on('publish', async (packet, client) => {
             const road = topic.split('/')[2];
             if (!ROADS.includes(road)) return;
 
+            // Piezo only confirmed when US1 is also stable
             const us1Active = usData[road] && usData[road].us1Stable;
-            const piezoConfirmed = data.heavyVehicle && us1Active && !piezoData[road].locked;
 
-            if (piezoConfirmed) {
+            if (data.heavyVehicle && us1Active && !piezoData[road].locked) {
                 piezoData[road] = { heavy: true, timestamp: Date.now(), locked: true };
                 heavyVehicleActive[road] = true;
-                console.log(`🚛 HEAVY VEHICLE confirmed on ${road} (US1+Piezo) — locked`);
+                console.log(`🚛 HEAVY VEHICLE confirmed on ${road} (US1+Piezo)`);
                 io.emit('piezoUpdate',        { road, heavyVehicle: true, rawValue: data.piezoValue });
                 io.emit('heavyVehicleUpdate', { road, active: true });
                 broadcastFullState();
@@ -1057,7 +1106,7 @@ aedes.on('publish', async (packet, client) => {
     }
 
     // ── Pedestrian ────────────────────────────────────────────────────────────
-    if (topic.startsWith('traffic/pedestrian/')) {
+    if (topic.startsWith('traffic/pedestrian/') && !topic.includes('/cmd/')) {
         try {
             const data = JSON.parse(payload);
             const road = topic.split('/')[2];
@@ -1072,8 +1121,6 @@ aedes.on('publish', async (packet, client) => {
                     const rem = liveCountdown[road] || 0;
                     if (rem > 3) _startPedCrossing(road, 3);
                     else io.emit('pedestrianUpdate', { road, ...pedStatus[road], action: 'WAIT_TOO_SHORT_RED' });
-                } else if (livePhase[road] === 'YELLOW' && currentPhase === 'PRE_GREEN_YELLOW') {
-                    io.emit('pedestrianUpdate', { road, ...pedStatus[road], action: 'WAIT_YELLOW_UNSAFE' });
                 } else if (livePhase[road] === 'GREEN') {
                     io.emit('pedestrianUpdate', { road, ...pedStatus[road], action: 'WAIT_FOR_GREEN_END' });
                 } else if (livePhase[road] === 'YELLOW') {
@@ -1088,8 +1135,8 @@ aedes.on('publish', async (packet, client) => {
             }
 
             if (data.crossing !== undefined) {
-                if (data.crossing && !pedStatus[road].crossing)    _startPedCrossing(road, data.duration || 3);
-                if (!data.crossing && pedStatus[road].crossing) _endPedCrossing(road);
+                if (data.crossing  && !pedStatus[road].crossing) _startPedCrossing(road, data.duration || 3);
+                if (!data.crossing &&  pedStatus[road].crossing) _endPedCrossing(road);
             }
 
             io.emit('pedestrianUpdate', { road, ...pedStatus[road] });
@@ -1126,40 +1173,30 @@ function sendCommandToRoad(road, signal, greenDur, yellowOverride, dynamicRed) {
     aedes.publish({
         topic:   `traffic/control/${road}`,
         payload: Buffer.from(msg),
-        qos:     1,
-        retain:  true
+        qos: 1, retain: true
     }, err => { if (err) console.error(`❌ Send failed ${road}:`, err); });
-    console.log(`📤 ${road}: ${signal} (green=${greenDur}s yt=${yt}s rd=${rt}s)`);
+    console.log(`📤 ${road}: ${signal} (g=${greenDur}s y=${yt}s r=${rt}s)`);
 }
 
 function decideNextWinner() {
     latestDecision = makeSignalDecision(
-        usData,
-        googleTraffic,
-        usWorking,
-        googleWorking,
-        piezoData,
-        rainDetected,
-        pedStatus,
-        espOnline
+        usData, googleTraffic, usWorking, googleWorking,
+        piezoData, rainDetected, pedStatus, espOnline
     );
-
     if (latestDecision && latestDecision.winner) {
         const w = latestDecision.winner;
-        latestDecision.greenDuration  = latestDecision.greenDuration || greenTime[w] || 3;
+        latestDecision.greenDuration  = latestDecision.greenDuration  || greenTime[w] || 3;
         latestDecision.yellowDuration = yellowTime;
         latestDecision.redForOthers   = latestDecision.greenDuration + latestDecision.yellowDuration;
     }
-
     io.emit('newDecision', latestDecision);
-    console.log(`🧠 ${latestDecision.winner} GREEN (${latestDecision.greenDuration}s) ` +
-                `YEL (${latestDecision.yellowDuration}s) ` +
-                `Others RED (${latestDecision.redForOthers}s) Mode:${latestDecision.mode}`);
+    console.log(`🧠 ${latestDecision.winner} GREEN(${latestDecision.greenDuration}s) ` +
+                `YEL(${latestDecision.yellowDuration}s) ` +
+                `Others RED(${latestDecision.redForOthers}s) Mode:${latestDecision.mode}`);
     return latestDecision;
 }
 
 let countdownIntervals = {};
-
 function startCountdown(road, phase, seconds) {
     if (countdownIntervals[road]) clearInterval(countdownIntervals[road]);
     let rem = seconds;
@@ -1178,9 +1215,11 @@ function broadcastFullState() {
         liveCountdown,
         livePhase,
         latestDecision,
-        usData,
+        usData,            // ← dual ultrasonic queue data
+        sensorData,        // ← legacy raw distance (fallback)
         googleTraffic,
-        usWorking,
+        usWorking,         // ← which ESP32s are sending data
+        sensorWorking: usWorking,  // ← alias so old dashboard code also works
         googleWorking,
         piezoData,
         rainDetected,
@@ -1199,10 +1238,10 @@ function broadcastFullState() {
 function runOneCycle() {
     if (forceOverride && forceOverride.active) return;
 
-    const decision      = decideNextWinner();
-    const winner        = decision.winner;
-    const greenDur      = decision.greenDuration  || greenTime[winner] || 3;
-    const yellowDur     = decision.yellowDuration || yellowTime;
+    const decision       = decideNextWinner();
+    const winner         = decision.winner;
+    const greenDur       = decision.greenDuration  || greenTime[winner] || 3;
+    const yellowDur      = decision.yellowDuration || yellowTime;
     const dynamicRedTime = greenDur + yellowDur;
 
     redTime       = dynamicRedTime;
@@ -1210,7 +1249,7 @@ function runOneCycle() {
     currentPhase  = 'RED_TO_GREEN';
 
     if (piezoData[winner] && piezoData[winner].heavy) {
-        console.log(`🚛 [${winner}] Heavy vehicle — extended green ${greenDur}s`);
+        console.log(`🚛 [${winner}] Heavy vehicle active — green ${greenDur}s (piezo extended)`);
     }
 
     // STEP 1: All roads RED
@@ -1222,7 +1261,7 @@ function runOneCycle() {
     });
     broadcastFullState();
 
-    // STEP 2: Winner pre-green YELLOW (1s into cycle)
+    // STEP 2: Winner pre-green YELLOW (1s pause then 2s yellow)
     setTimeout(() => {
         currentPhase = 'PRE_GREEN_YELLOW';
         sendCommandToRoad(winner, 'YELLOW', 0, 2, 0);
@@ -1231,7 +1270,7 @@ function runOneCycle() {
         startCountdown(winner, 'YELLOW', 2);
         broadcastFullState();
 
-        // STEP 3: Winner GREEN (after 2s pre-yellow)
+        // STEP 3: Winner GREEN (2s after pre-yellow)
         phaseTimer = setTimeout(() => {
             currentPhase = 'GREEN';
             sendCommandToRoad(winner, 'GREEN', greenDur, yellowDur, 0);
@@ -1245,7 +1284,7 @@ function runOneCycle() {
             phaseTimer = setTimeout(() => {
                 currentPhase = 'POST_GREEN_YELLOW';
 
-                // Clear piezo AFTER green cycle completes for winner
+                // Clear piezo after green cycle
                 if (piezoData[winner] && piezoData[winner].heavy) {
                     clearPiezoForRoad(winner);
                 }
@@ -1274,14 +1313,13 @@ function runOneCycle() {
                         }
                     });
 
-                    // STEP 6: Save analytics, then next cycle
+                    // STEP 6: Save analytics, next cycle
                     phaseTimer = setTimeout(async () => {
                         for (const road of ROADS) {
                             await saveAnalyticsRecord(road, {
-                                distanceCm:   usData[road].us1Raw || 999,
-                                queueLevel:   usData[road].us1Stable && usData[road].us2Stable
-                                                ? 'Heavy'
-                                                : usData[road].us1Stable ? 'Light' : 'None',
+                                distanceCm:    usData[road].us1Raw || 999,
+                                queueLevel:    usData[road].us1Stable && usData[road].us2Stable
+                                                ? 'Heavy' : usData[road].us1Stable ? 'Light' : 'None',
                                 googleTraffic: googleTraffic[road] || 'Unknown',
                                 rainDetected:  rainDetected,
                                 greenTime:     greenTime[road] || 3,
@@ -1311,7 +1349,6 @@ function applyForceOverride(road, command, duration) {
     Object.values(countdownIntervals).forEach(i => clearInterval(i));
 
     const overrideRed = command === 'GREEN' ? (duration + yellowTime) : duration;
-
     ROADS.forEach(r => {
         if (r !== road) {
             sendCommandToRoad(r, 'RED', 0, 0, overrideRed);
@@ -1331,7 +1368,7 @@ function applyForceOverride(road, command, duration) {
         broadcastFullState();
 
         setTimeout(() => {
-            console.log('✅ Force override ended — resuming');
+            console.log('✅ Force override ended — resuming normal cycle');
             forceOverride = null;
             ROADS.forEach(r => {
                 sendCommandToRoad(r, 'RED', 0, 0, 0);
@@ -1347,7 +1384,7 @@ function applyForceOverride(road, command, duration) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// GOOGLE TRAFFIC REFRESH (15-minute interval)
+// GOOGLE TRAFFIC REFRESH
 // ════════════════════════════════════════════════════════════════════════════
 async function refreshGoogleTraffic() {
     try {
@@ -1367,26 +1404,19 @@ async function refreshGoogleTraffic() {
 // ════════════════════════════════════════════════════════════════════════════
 app.get('/api/traffic', (req, res) => {
     res.json({
-        usData, googleTraffic, liveSignalState, liveCountdown, livePhase,
+        usData, sensorData, googleTraffic, liveSignalState, liveCountdown, livePhase,
         usWorking, googleWorking, currentDecision: latestDecision,
-        piezoData, rainDetected, yellowTime, pedStatus, greenTime, redTime,
-        espOnline, heavyVehicleActive,
-        note: 'redTime is dynamic: winner greenTime + yellowTime'
+        piezoData, rainDetected, yellowTime, pedStatus, greenTime, redTime, espOnline, heavyVehicleActive
     });
 });
-
-app.get('/api/decision', (req, res) => {
-    if (!latestDecision) return res.json({ message: 'No decision yet' });
-    res.json(latestDecision);
-});
-
-app.get('/api/us-data',     (req, res) => res.json(usData));
-app.get('/api/rain-status', (req, res) => res.json({ rainDetected, yellowTime }));
+app.get('/api/decision',     (req, res) => res.json(latestDecision || { message: 'No decision yet' }));
+app.get('/api/us-data',      (req, res) => res.json(usData));
+app.get('/api/rain-status',  (req, res) => res.json({ rainDetected, yellowTime }));
 
 app.post('/api/traffic/control', (req, res) => {
     const { location, command, duration } = req.body;
-    if (!ROADS.includes(location))                       return res.status(400).json({ error: 'Invalid road' });
-    if (!['RED','YELLOW','GREEN'].includes(command)) return res.status(400).json({ error: 'Invalid command' });
+    if (!ROADS.includes(location))                    return res.status(400).json({ error: 'Invalid road' });
+    if (!['RED','YELLOW','GREEN'].includes(command))  return res.status(400).json({ error: 'Invalid command' });
     const dur = parseInt(duration) || 30;
     applyForceOverride(location, command, dur);
     res.json({ message: `Force ${command} on ${location} for ${dur}s`, location, command, duration: dur });
@@ -1397,9 +1427,7 @@ app.post('/api/system/resume', (req, res) => {
     if (phaseTimer) clearTimeout(phaseTimer);
     ROADS.forEach(r => {
         sendCommandToRoad(r, 'RED', 0, 0, 0);
-        livePhase[r]       = 'RED';
-        liveSignalState[r] = 'RED';
-        liveCountdown[r]   = 0;
+        livePhase[r] = 'RED'; liveSignalState[r] = 'RED'; liveCountdown[r] = 0;
     });
     setTimeout(() => runOneCycle(), 2000);
     res.json({ message: 'Normal cycle resumed' });
@@ -1418,6 +1446,11 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+// Catch-all for React SPA
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 // SOCKET.IO
 // ════════════════════════════════════════════════════════════════════════════
@@ -1425,9 +1458,8 @@ io.on('connection', socket => {
     console.log('🖥️ Dashboard connected:', socket.id);
     socket.emit('fullState', {
         liveSignalState, liveCountdown, livePhase, latestDecision,
-        usData, googleTraffic, usWorking, googleWorking,
-        piezoData, rainDetected, yellowTime,
-        pedStatus, greenTime, redTime, espOnline, heavyVehicleActive
+        usData, sensorData, googleTraffic, usWorking, sensorWorking: usWorking, googleWorking,
+        piezoData, rainDetected, yellowTime, pedStatus, greenTime, redTime, espOnline, heavyVehicleActive
     });
     socket.on('disconnect', () => console.log('🖥️ Dashboard disconnected:', socket.id));
 });
@@ -1439,7 +1471,7 @@ mqttServer.listen(MQTT_PORT, () => console.log(`📡 MQTT Broker on port ${MQTT_
 httpServer.listen(PORT,      () => console.log(`✅ Server on port ${PORT}`));
 
 setTimeout(async () => {
-    console.log('\n🚦 Starting HYDRA v8.0...');
+    console.log('\n🚦 Starting HYDRA v8.0 FIXED...');
     await refreshGoogleTraffic();
     setInterval(refreshGoogleTraffic, 15 * 60 * 1000);
     runOneCycle();
@@ -1447,7 +1479,6 @@ setTimeout(async () => {
 
 setInterval(broadcastFullState, 2000);
 
-// ESP32 health check every 30s
 setInterval(() => {
     ROADS.forEach(road => {
         const age = Date.now() - espLastSeen[road];
@@ -1460,13 +1491,10 @@ setInterval(() => {
     });
 }, 30000);
 
-// Analytics broadcast every 30s
 setInterval(async () => {
     try {
         const [peakHours, roadPerf, efficiency] = await Promise.all([
-            getPeakHourAnalysis(),
-            getRoadPerformance(),
-            getSystemEfficiency()
+            getPeakHourAnalysis(), getRoadPerformance(), getSystemEfficiency()
         ]);
         io.emit('analyticsUpdate', { peakHours, roadPerf, efficiency });
     } catch (err) { console.error('Analytics broadcast error:', err.message); }
