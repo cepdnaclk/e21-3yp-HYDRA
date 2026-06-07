@@ -1108,7 +1108,7 @@ function queueLevelLabel(us1Stable, us2Stable, piezoHeavy) {
     if (us1Stable && us2Stable && piezoHeavy) return '3s + 6s heavy + 3s piezo = 12s';
     if (us1Stable && us2Stable)               return '3s + 6s heavy = 9s';
     if (us1Stable && piezoHeavy)              return '3s + 3s light + 3s piezo = 9s';
-    if (us1Stable)                             return '3s + 3s light = 6s';
+    if (us1Stable)                            return '3s + 3s light = 6s';
     return '3s base';
 }
 
@@ -1126,7 +1126,6 @@ export default function AdminDashboard({ user, onLogout }) {
     });
     const [usWorking,     setUsWorking]     = useState({ North:false, South:false, East:false, West:false });
     const [googleTraffic, setGoogleTraffic] = useState({ North:'Unknown', South:'Unknown', East:'Unknown', West:'Unknown' });
-    const [googleWorking, setGoogleWorking] = useState(false);
     const [piezoData,     setPiezoData]     = useState({
         North:{heavy:false}, South:{heavy:false}, East:{heavy:false}, West:{heavy:false}
     });
@@ -1139,7 +1138,7 @@ export default function AdminDashboard({ user, onLogout }) {
         West: {requested:false,crossing:false,duration:0}
     });
     const [decision,      setDecision]      = useState(null);
-    const [nextWinner,    setNextWinner]    = useState(null);  // preview for next cycle
+    const [nextWinner,    setNextWinner]    = useState(null);
     const [connected,     setConnected]     = useState(false);
     const [notif,         setNotif]         = useState(null);
     const [espOnline,     setEspOnline]     = useState({ North:false, South:false, East:false, West:false });
@@ -1166,7 +1165,6 @@ export default function AdminDashboard({ user, onLogout }) {
             if (data.usData)        setUsData(data.usData);
             if (data.usWorking)     setUsWorking(data.usWorking);
             if (data.googleTraffic) setGoogleTraffic(data.googleTraffic);
-            if (data.googleWorking !== undefined) setGoogleWorking(data.googleWorking);
             if (data.piezoData)     setPiezoData(data.piezoData);
             if (data.rainDetected !== undefined) {
                 setRainDetected(data.rainDetected);
@@ -1194,9 +1192,7 @@ export default function AdminDashboard({ user, onLogout }) {
         });
         socket.on('rainUpdate',       ({ rainDetected: r }) => { setRainDetected(r); setYellowTime(r ? 5 : 3); });
         socket.on('pedestrianUpdate', ({ road, ...rest })   => setPedStatus(p => ({ ...p, [road]: rest })));
-        socket.on('googleTrafficUpdate', ({ googleTraffic: gt, googleWorking: gw }) => {
-            setGoogleTraffic(gt); setGoogleWorking(gw);
-        });
+        socket.on('googleTrafficUpdate', ({ googleTraffic: gt }) => setGoogleTraffic(gt));
         socket.on('espStatusUpdate',  ({ road, online })    => setEspOnline(prev => ({ ...prev, [road]: online })));
         socket.on('analyticsUpdate',  data => setAnalyticsData({
             peakHours: data.peakHours||[], roadPerf: data.roadPerf||[], efficiency: data.efficiency||{}
@@ -1327,9 +1323,6 @@ export default function AdminDashboard({ user, onLogout }) {
                     const phase      = livePhase[road] || 'RED';
                     const count      = liveCD[road] || 0;
                     const isWinner   = winner === road;
-                    // GREEN BORDER LOGIC:
-                    //   - Road is currently GREEN → green border
-                    //   - Road is the NEXT winner (preview during post-green yellow) → green border
                     const isNextWin  = nextWinner === road && !isWinner;
                     const showGreenBorder = isWinner || isNextWin;
                     const ped        = pedStatus[road] || { requested:false, crossing:false, duration:0 };
@@ -1443,7 +1436,7 @@ export default function AdminDashboard({ user, onLogout }) {
                             {/* Rain panel */}
                             <RainPanel rainDetected={rainDetected} yellowTime={yellowTime} isNorthRoad={road==='North'} />
 
-                            {/* Google Traffic — driver info ONLY, not used in signal scoring */}
+                            {/* Google Traffic — driver info ONLY */}
                             <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8,
                                 background:'#0f172a', padding:'8px 10px', borderRadius:8 }}>
                                 <span style={{ fontSize:14 }}>🗺️</span>
@@ -1481,7 +1474,6 @@ export default function AdminDashboard({ user, onLogout }) {
                             </thead>
                             <tbody>
                                 {decision.priorities.map((p, i) => {
-                                    const isOnCooldown = p.onCooldown;
                                     const isNext = nextWinner === p.road && p.road !== winner;
                                     return (
                                         <tr key={p.road} style={{ borderBottom:'1px solid #0f172a',
@@ -1506,8 +1498,7 @@ export default function AdminDashboard({ user, onLogout }) {
                                                 {p.piezoHeavy ? '🚛 +3s' : '—'}
                                             </td>
                                             <td style={{ padding:'8px 10px', color:p.score>0?'#4ade80':p.score<0?'#f87171':'#94a3b8', fontWeight:'bold' }}>
-                                                {isOnCooldown ? <span style={{color:'#64748b'}}>COOLDOWN</span>
-                                                    : (typeof p.score==='number' ? p.score : '—')}
+                                                {typeof p.score==='number' ? p.score : '—'}
                                             </td>
                                             <td style={{ padding:'8px 10px', color:i===0?'#4ade80':'#94a3b8', fontWeight:i===0?'bold':'normal' }}>
                                                 {p.greenTime > 0 ? `${p.greenTime}s` : '—'}
@@ -1548,7 +1539,6 @@ export default function AdminDashboard({ user, onLogout }) {
                     <div>🚛 <strong>Piezo</strong>: +3s only when US1 stable. US2 alone = ignored.</div>
                     <div>🌧️ <strong>YELLOW</strong>: 3s dry → 5s rain (+2s). Rain sensor on North only, applies to all roads.</div>
                     <div>🔴 <strong>RED (others)</strong>: 2s pre-yellow + winner GREEN + winner YELLOW = dynamic total</div>
-                    <div>❄️ <strong>Cooldown</strong>: last winner excluded 1 cycle. If all roads on cooldown → ignored.</div>
                     <div>⏭️ <strong>Next preview</strong>: decided at post-green yellow, shown on dashboard early.</div>
                     <div>🔁 <strong>Tie-breaking</strong>: round-robin N→S→E→W when scores are equal</div>
                     <div>🔁 <strong>Fallback</strong>: no sensors → round-robin of ONLINE roads only (offline = skipped)</div>
