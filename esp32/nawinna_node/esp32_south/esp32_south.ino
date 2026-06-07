@@ -15,29 +15,29 @@
 #include <ArduinoJson.h>
 
 const char* ROAD_ID     = "South";
-const char* WIFI_SSID   = "Dialog 4G 940";
-const char* WIFI_PASS   = "Robbin123@hood";
+const char* WIFI_SSID   = "SLT-4G_166D59";
+const char* WIFI_PASS   = "F58EA0CF";
 const char* MQTT_SERVER = "56.228.30.50";
 const int   MQTT_PORT   = 1883;
 
 #define US1_TRIG      5
 #define US1_ECHO      18
-#define US2_TRIG      19
-#define US2_ECHO      21
+#define US2_TRIG      32
+#define US2_ECHO      33
 #define RED_LED       26
 #define YELLOW_LED    27
 #define GREEN_LED     14
-#define PIEZO_PIN     32
+#define PIEZO_PIN     35
 #define PED_BUTTON    25
-#define PED_RED_LED   4
-#define PED_GREEN_LED 16
+#define PED_RED_LED   19
+#define PED_GREEN_LED 21
 #define SEG_A  2
 #define SEG_B  15
 #define SEG_C  12
 #define SEG_D  13
 #define SEG_E  22
 #define SEG_F  23
-#define SEG_G  17
+#define SEG_G  4
 
 #define ROAD_WIDTH_CM   7.0f
 #define STABLE_MS       5000UL
