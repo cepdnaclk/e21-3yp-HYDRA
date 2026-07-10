@@ -161,4 +161,5 @@ async function getAllTrafficConditions() {
     return result;
 }
 
-module.exports = { getAllTrafficConditions, getTrafficCondition };
+//module.exports = { getAllTrafficConditions, getTrafficCondition };
+module.exports = { getAllTrafficConditions, getTrafficCondition, ratioToLevel, parseDurationSeconds };
