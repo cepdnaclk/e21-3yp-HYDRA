@@ -1,13 +1,13 @@
 // client/src/pages/UserDashboard.js — HYDRA USER DASHBOARD
 // 4-Way Traffic Light Junction Visualization
 // Replacing column-based dashboard with animated junction showing department health
-
+/*
 import React from 'react';
 import TrafficLightJunction from '../components/TrafficLightJunction';
 
 export default function UserDashboard({ user, onLogout }) {
   return <TrafficLightJunction />;
-}
+}*/
 
 //         statusColor = '#fde047'; statusLabel = `WAITING — pressed during ${phase}`;
 //         statusBg = '#3d2000'; borderColor = '#f59e0b';
