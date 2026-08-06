@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HYDRA — Hybrid Dynamic Real-time Traffic Automation</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <!-- HERO SECTION -->
+    <header class="hero animated-bg">
+        <div class="container fade-in-up">
+            <h1 class="glow-text-white pulse-glow">H.Y.D.R.A</h1>
+            <h2>Hybrid Dynamic Real-time Traffic Automation using Cloud-Edge Fusion</h2>
+            <p class="subtitle">ESP32 • AWS EC2 • React Dashboard • MQTT • MongoDB</p>
+        </div>
+    </header>
+
+    <main class="container">
+        
+        <!-- TABLE OF CONTENTS -->
+        <nav class="toc-container fade-in-up delay-1">
+            <h3>Table of Contents</h3>
+            <ul class="toc-list">
+                <li><a href="#introduction">1. Introduction</a></li>
+                <li><a href="#solution-architecture">2. Solution Architecture</a></li>
+                <li><a href="#hardware-software">3. Hardware & Software Designs</a></li>
+                <li><a href="#key-features">4. Key Functionalities</a></li>
+                <li><a href="#testing">5. Testing & Failsafe</a></li>
+                <li><a href="#detailed-budget">6. Detailed Budget</a></li>
+                <li><a href="#conclusion">7. Conclusion</a></li>
+                <li><a href="#links">8. Links & Team</a></li>
+            </ul>
+        </nav>
+
+        <!-- 1. INTRODUCTION -->
+        <section id="introduction" class="section fade-in-up delay-2">
+            <h2 class="section-title">1. Introduction</h2>
+            <div class="problem-solution-grid">
+                
+                <!-- The Problem -->
+                <div class="card card-red hover-glow-red">
+                    <h3 class="card-title"><i class="fa-solid fa-triangle-exclamation"></i> The Problem</h3>
+                    
+                    <img src="images/traffic.jpg" alt="Traffic Congestion in Sri Lanka" class="content-image" onerror="this.style.display='none'">
+                    
+                    <p>Current traffic management infrastructure in Sri Lanka relies almost exclusively on fixed-cycle traffic signals that operate on predetermined time intervals. This contributes to Rs. 70 billion in annual economic losses.</p>
+                    <ul class="custom-list red-bullets">
+                        <li><strong>Inefficiency:</strong> Empty roads at 2 AM still force drivers to wait a full 60-second red cycle.</li>
+                        <li><strong>Rush-Hour Imbalance:</strong> High-traffic roads receive the same green time as empty cross-streets.</li>
+                        <li><strong>Weather Blindness:</strong> Fixed systems ignore the 70% longer braking distance required in rain.</li>
+                        <li><strong>Pedestrian Danger:</strong> No on-demand crossing capability forces pedestrians to jaywalk.</li>
+                    </ul>
+                </div>
+
+                <!-- The Solution -->
+                <div class="card card-green hover-glow-green">
+                    <h3 class="card-title"><i class="fa-solid fa-lightbulb"></i> The HYDRA Solution</h3>
+                    <p>HYDRA replaces conventional fixed-cycle traffic signals with a real-time, sensor-driven control system. By combining embedded hardware at the intersection edge with cloud-based intelligence hosted on AWS EC2, HYDRA dynamically adapts signal timing to actual road conditions.</p>
+                    <ul class="custom-list green-bullets">
+                        <li><strong>Dynamic Timing:</strong> Adjusts green phases based on live vehicle queue lengths.</li>
+                        <li><strong>Weather-Aware:</strong> Automatic yellow-light extension during rain.</li>
+                        <li><strong>Pedestrian Integration:</strong> Enable on-demand and immediate pedestrian crossing management.</li>
+                        <li><strong>Resilient:</strong> Failsafe local cycle activates automatically if cloud connectivity is lost.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. SOLUTION ARCHITECTURE -->
+        <section id="solution-architecture" class="section">
+            <h2 class="section-title">2. Solution Architecture</h2>
+            <p class="center-text section-intro">HYDRA is built on a three-layer cloud-edge architecture. Each layer has a clearly defined responsibility, and communication between layers is standardized through MQTT and HTTP/WebSocket protocols.</p>
+            
+            <div class="image-wrapper hover-lift">
+                <h3>High-Level System Architecture</h3>
+                <img src="images/architecture.png" alt="HYDRA System Architecture" class="project-image">
+                <p class="image-caption">Cloud-edge fusion combining AWS servers, MQTT brokers, and ESP32 edge nodes.</p>
+            </div>
+
+            <div class="image-wrapper hover-lift">
+                <h3>Data Flow & Processing</h3>
+                <img src="images/data-flow.png" alt="HYDRA Data Flow Diagram" class="project-image">
+                <p class="image-caption">The logical flow from edge sensors through the AWS fast brain to physical signal actuation.</p>
+            </div>
+
+            <h3 class="subsection-title">End-to-End Data Flow</h3>
+            <div class="table-container">
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Process & Action</th>
+                            <th>Data Output</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>1</td><td>ESP32 reads sensor values continuously (Ultrasonic, Rain, Touch).</td><td>Raw sensor data</td></tr>
+                        <tr><td>2</td><td>ESP32 packages readings into JSON and publishes to MQTT via Wi-Fi (`hydra/sensor/{road_id}`).</td><td>JSON payload</td></tr>
+                        <tr><td>3</td><td>Node.js backend parses JSON and queries Google Maps Traffic API.</td><td>Traffic density score (0-100)</td></tr>
+                        <tr><td>4</td><td>Signal timing algorithm calculates optimal green time. Commands published back via MQTT and logged to MongoDB.</td><td>Computed timing values</td></tr>
+                        <tr><td>5</td><td>ESP32 subscribes to `hydra/signal/{road_id}`, receives command, and actuates LED traffic lights and 7-segment display.</td><td>LED state + countdown</td></tr>
+                        <tr><td>6</td><td>React dashboard polls AWS via REST API/WebSocket for real-time visual updates.</td><td>Live UI updates</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 3. HARDWARE & SOFTWARE DESIGNS -->
+        <section id="hardware-software" class="section">
+            <h2 class="section-title">3. Hardware & Software Designs</h2>
+            
+            <h3 class="subsection-title">Edge Layer (Hardware Sensing)</h3>
+            <p class="section-intro">Each road unit uses an ESP32 DevKit V1 responsible for continuously reading sensors, packaging data, and actuating signals. This ensures millisecond-level responsiveness at the physical intersection.</p>
+            
+            <!-- Removed the grid-3 class and replaced with a grid layout adjusted for 4 items -->
+            <div class="grid-2">
+                <div class="tech-card hover-lift">
+                    <h4><i class="fa-solid fa-car"></i> Ultrasonic (HC-SR04)</h4>
+                    <p>Placed at 5cm and 15cm along the road. 1 sensor blocked = low traffic; both blocked = heavy traffic.</p>
+                </div>
+                <div class="tech-card hover-lift">
+                    <h4><i class="fa-solid fa-cloud-rain"></i> Rain Sensor</h4>
+                    <p>Elevated mount above road. Triggers weather-aware logic when road surface is wet.</p>
+                </div>
+                <div class="tech-card hover-lift">
+                    <h4><i class="fa-solid fa-hand-pointer"></i> Touch Button</h4>
+                    <p>Immediate crossing request during red; crossing request queued during green phase.</p>
+                </div>
+                <div class="tech-card hover-lift">
+                    <h4><i class="fa-solid fa-traffic-light"></i> LED & 7-Segment</h4>
+                    <p>Actuates RED, YELLOW, GREEN states and displays remaining seconds for the current phase.</p>
+                </div>
+            </div>
+
+            <h3 class="subsection-title" style="margin-top: 60px;">Cloud & Client Layer (Software Stack)</h3>
+            <div class="table-container">
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Technology</th>
+                            <th>Purpose in HYDRA</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Backend</td><td>Node.js + Express</td><td>Server-side processing, signal timing algorithm, REST API.</td></tr>
+                        <tr><td>Protocol</td><td>MQTT (Mosquitto)</td><td>Lightweight pub/sub messaging between ESP32 and cloud.</td></tr>
+                        <tr><td>Database</td><td>MongoDB</td><td>Persistent storage for sensor data, signal logs, traffic events.</td></tr>
+                        <tr><td>External API</td><td>Google Maps Traffic API</td><td>External traffic density enrichment for intersection area.</td></tr>
+                        <tr><td>Frontend</td><td>React</td><td>Live web dashboard for monitoring and manual control.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 4. KEY FUNCTIONALITIES -->
+        <section id="key-features" class="section">
+            <h2 class="section-title">4. Key Functionalities</h2>
+
+            <div class="card card-green hover-glow-green" style="margin-bottom: 40px;">
+                <h3 class="card-title"><i class="fa-solid fa-stopwatch"></i> Dynamic Green Time Calculation</h3>
+                <p>The core functionality of HYDRA is its ability to calculate optimal green signal durations in real time. The algorithm combines two main data sources:</p>
+                <ul class="custom-list green-bullets" style="margin-bottom: 25px;">
+                    <li>Local sensor readings from the road's two ultrasonic sensors (queue length proxy).</li>
+                    <li>Google Maps Traffic API congestion score for the intersection area.</li>
+                </ul>
+                <p>The base green time is adjusted using the following rules applied in sequence:</p>
+                <div class="rule-box">
+                    <ul class="custom-list green-bullets">
+                        <li><strong>Base Green Time:</strong> Configurable per intersection (default 8 seconds).</li>
+                        <li><strong>One Ultrasonic Sensor Blocked:</strong> Add 3 seconds to green time.</li>
+                        <li><strong>Both Ultrasonic Sensors Blocked:</strong> Add 6 seconds to green time (replaces the +3s rule).</li>
+                        <li><strong>Google Maps Congestion Score HIGH:</strong> Add a further 2–4 seconds.</li>
+                        <li><strong>Pedestrian Crossing Requested:</strong> Reserve minimum crossing time at next red phase.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="grid-2" style="margin-bottom: 40px;">
+                <div class="card hover-glow-yellow card-yellow">
+                    <h3 class="card-title" style="font-size: 1.2rem;"><i class="fa-solid fa-cloud-showers-water yellow-text"></i> Weather-Aware</h3>
+                    <p>The rain sensor provides a binary wet/dry road status. When rain is detected:</p>
+                    <ul class="custom-list yellow-bullets">
+                        <li>Yellow light duration is automatically extended by a factor of <strong>1.5x</strong>.</li>
+                        <li>Accommodates the 70% longer braking distance required on wet roads.</li>
+                        <li>Factored into timing calculations for all roads simultaneously via cloud.</li>
+                    </ul>
+                </div>
+
+                <div class="card hover-glow-yellow card-yellow">
+                    <h3 class="card-title" style="font-size: 1.2rem;"><i class="fa-solid fa-person-walking yellow-text"></i> Pedestrian Sync</h3>
+                    <p>Capacitive touch buttons provide two modes of crossing management:</p>
+                    <ul class="custom-list yellow-bullets">
+                        <li><strong>During RED (Immediate):</strong> Request acknowledged instantly, ensuring current red phase is safe.</li>
+                        <li><strong>During GREEN (Queued):</strong> Request is queued, factored into the next cycle, and honoured at the next red phase.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="card hover-glow-green card-green">
+                    <h3 class="card-title"><i class="fa-solid fa-tower-broadcast green-text"></i> Multi-Intersection Green Wave</h3>
+                    <p>For deployments spanning multiple intersections, HYDRA's cloud backend supports green wave synchronization. The Node.js server tracks timing upstream and downstream, adjusting green start times so vehicles travelling at the speed limit encounter consecutive green lights without stopping.</p>
+                </div>
+
+                <div class="card hover-glow-green card-green">
+                    <h3 class="card-title"><i class="fa-solid fa-desktop green-text"></i> Live Web Dashboard</h3>
+                    <ul class="custom-list green-bullets">
+                        <li><strong>Signal State Display:</strong> Live RED/YELLOW/GREEN indicators.</li>
+                        <li><strong>Sensor Panel:</strong> Live ultrasonic readings, rain flag.</li>
+                        <li><strong>Timing Panel:</strong> Current computed durations per road.</li>
+                        <li><strong>Traffic Map:</strong> Google Maps integration with live congestion overlays.</li>
+                        <li><strong>Event Log & Overrides:</strong> Manual state controls for emergencies.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- 5. TESTING & FAILSAFE -->
+        <section id="testing" class="section">
+            <h2 class="section-title">5. Testing & Resilience</h2>
+            <div class="card card-red hover-glow-red" style="text-align: center;">
+                <h3 class="card-title justify-center red-text" style="font-size: 1.8rem;"><i class="fa-solid fa-shield-halved"></i> Fail-Safe Local Cycle</h3>
+                <p style="max-width: 800px; margin: 0 auto 30px auto;">To ensure rigorous resilience testing, the ESP32 firmware implements a watchdog mechanism that monitors Wi-Fi connectivity and MQTT heartbeat messages from the cloud. If connectivity is lost, it automatically reverts to a fixed local cycle to prevent intersection failure:</p>
+                
+                <div class="failsafe-lights">
+                    <div class="light red-light">RED: 3s</div>
+                    <div class="light yellow-light">YELLOW: 3s</div>
+                    <div class="light green-light">GREEN: 3s</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 6. DETAILED BUDGET -->
+        <section id="detailed-budget" class="section">
+            <h2 class="section-title">6. Detailed Budget</h2>
+            <p class="center-text section-intro">Hardware budget sized for a full four-road intersection deployment. Cloud infrastructure costs (AWS/Google Maps API) are handled separately.</p>
+            <div class="table-container">
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Qty</th>
+                            <th>Unit Cost (LKR)</th>
+                            <th>Total (LKR)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>ESP32 DevKit V1 (N, S, E, W)</td><td>4</td><td>1,650</td><td>6,600</td></tr>
+                        <tr><td>LED Traffic Light Module</td><td>8</td><td>150</td><td>1,200</td></tr>
+                        <tr><td>Rain Sensor Module</td><td>1</td><td>250</td><td>250</td></tr>
+                        <tr><td>Ultrasonic Sensor HC-SR04</td><td>8</td><td>200</td><td>1,600</td></tr>
+                        <tr><td>Seven Segment Display</td><td>4</td><td>80</td><td>320</td></tr>
+                        <tr><td>Capacitive Touch TTP223</td><td>4</td><td>100</td><td>400</td></tr>
+                        <tr><td>Bread Boards</td><td>6</td><td>150</td><td>900</td></tr>
+                        <tr><td>3D Printed Enclosures</td><td>-</td><td>-</td><td>16,000</td></tr>
+                        <tr><td>Others (wiring, connectors, misc.)</td><td>-</td><td>-</td><td>2,230</td></tr>
+                        <tr class="total-row"><td><strong>TOTAL BUDGET</strong></td><td></td><td></td><td><strong>LKR 29,500</strong></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 7. CONCLUSION -->
+        <section id="conclusion" class="section">
+            <h2 class="section-title">7. Conclusion & Future Work</h2>
+            <div class="grid-2">
+                <div class="card hover-lift">
+                    <h3>System Impact</h3>
+                    <p>HYDRA presents a complete, working proof-of-concept for cloud-edge fusion in urban traffic management. By dynamically adapting signal timing based on actual road conditions—vehicle density, weather, and pedestrian demand—HYDRA eliminates the fundamental inefficiency of fixed-cycle traffic lights.</p>
+                </div>
+                <div class="card hover-lift">
+                    <h3>Future Work</h3>
+                    <ul class="custom-list green-bullets">
+                        <li><strong>Computer Vision:</strong> Replace ultrasonic sensors with edge-AI cameras.</li>
+                        <li><strong>Emergency Preemption:</strong> Integrate GPS for ambulance green corridors.</li>
+                        <li><strong>Adaptive ML:</strong> Train models on MongoDB historical data.</li>
+                        <li><strong>City-Scale Deployment:</strong> Deploy at high-congestion intersections in Colombo.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- 8. LINKS & TEAM -->
+        <section id="links" class="section">
+            <h2 class="section-title">8. Team & Links</h2>
+            
+            <div class="team-grid">
+                <div class="team-card hover-glow-green">
+                    <h3>Diwyanjali Jayasooriya</h3>
+                    <p class="e-number">e21196</p>
+                    <a href="mailto:e21196@eng.pdn.ac.lk" class="email-btn"><i class="fa-solid fa-envelope"></i> Email</a>
+                </div>
+                <div class="team-card hover-glow-green">
+                    <h3>Samadhini Perera</h3>
+                    <p class="e-number">e21289</p>
+                    <a href="mailto:e21289@eng.pdn.ac.lk" class="email-btn"><i class="fa-solid fa-envelope"></i> Email</a>
+                </div>
+                <div class="team-card hover-glow-green">
+                    <h3>Vedangi Nadeeshani</h3>
+                    <p class="e-number">e21193</p>
+                    <a href="mailto:e21193@eng.pdn.ac.lk" class="email-btn"><i class="fa-solid fa-envelope"></i> Email</a>
+                </div>
+            </div>
+
+            <div class="project-links-box">
+                <a href="https://github.com/cepdnaclk/e21-3yp-HYDRA" target="_blank" class="link-item">
+                    <i class="fa-brands fa-github"></i> Source Repository
+                </a>
+                <a href="https://cepdnaclk.github.io/e21-3yp-HYDRA" target="_blank" class="link-item">
+                    <i class="fa-solid fa-globe"></i> Project Page
+                </a>
+                <a href="http://www.ce.pdn.ac.lk/" target="_blank" class="link-item">
+                    <i class="fa-solid fa-building-columns"></i> Computer Engineering Dept.
+                </a>
+            </div>
+        </section>
+
+    </main>
+
+    <footer>
+        <div class="container center-text">
+            <p class="footer-text">CO 3060 | 3rd Year Project | Group 22</p>
+        </div>
+    </footer>
+</body>
+</html>
